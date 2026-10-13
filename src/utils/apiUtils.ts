@@ -29,3 +29,36 @@ export const getApiUrl = (path: string): string => {
   }
   return cleanPath;
 };
+
+/**
+ * Safely fetches an API endpoint and parses JSON, handling non-JSON responses (such as 404 HTML pages on Vercel static hosting).
+ */
+export const safeFetchJson = async (url: string, options?: RequestInit): Promise<{ ok: boolean; status: number; data: any }> => {
+  try {
+    const res = await fetch(url, options);
+    const contentType = res.headers.get('content-type') || '';
+
+    if (!contentType.includes('application/json')) {
+      return {
+        ok: false,
+        status: res.status,
+        data: {
+          success: false,
+          error: 'ระบบทำงานในโหมด Static Hosting (เช่น Vercel) ซึ่งไม่มี Node.js Backend Server รองรับ API กรุณาใช้งานผ่าน AI Studio หรือรันในโหมด Full-Stack',
+        },
+      };
+    }
+
+    const data = await res.json();
+    return { ok: res.ok, status: res.status, data };
+  } catch (err: any) {
+    return {
+      ok: false,
+      status: 500,
+      data: {
+        success: false,
+        error: err.message || 'Network error or invalid JSON response',
+      },
+    };
+  }
+};

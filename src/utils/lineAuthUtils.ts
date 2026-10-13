@@ -1,4 +1,4 @@
-import { getApiUrl, getExpressBackendOrigin } from './apiUtils';
+import { getApiUrl, safeFetchJson } from './apiUtils';
 
 /**
  * Returns the active LINE OAuth Callback URL pointing strictly to Express server container.
@@ -16,16 +16,15 @@ export const loginWithLinePopup = async (_arg1?: any, _arg2?: any) => {
     const clientOrigin = typeof window !== 'undefined' ? window.location.origin : '';
     const endpoint = getApiUrl(`/api/line/login-url?client_origin=${encodeURIComponent(clientOrigin)}`);
     
-    const res = await fetch(endpoint);
-    const data = await res.json();
+    const { ok, data } = await safeFetchJson(endpoint);
 
-    if (data?.loginUrl) {
+    if (ok && data?.loginUrl) {
       // Open in a new window/tab to prevent X-Frame-Options iframe errors
       window.open(data.loginUrl, '_blank');
     } else if (data?.error) {
       alert(`LINE Login Error: ${data.error}`);
     } else {
-      throw new Error('ไม่สามารถรับ URL สำหรับเข้าสู่ระบบ LINE ได้');
+      throw new Error(data?.error || 'ไม่สามารถรับ URL สำหรับเข้าสู่ระบบ LINE ได้ (โปรดตรวจสอบการรันในโหมด Full-Stack)');
     }
   } catch (err: any) {
     console.error('Failed to trigger LINE login popup:', err);

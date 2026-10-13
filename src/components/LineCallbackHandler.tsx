@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useDuty } from '../context/DutyContext';
 import { CheckCircle2, AlertCircle, Loader2, Sparkles } from 'lucide-react';
-import { getApiUrl } from '../utils/apiUtils';
+import { getApiUrl, safeFetchJson } from '../utils/apiUtils';
 import { getActiveLineCallbackUrl } from '../utils/lineAuthUtils';
 
 export const LineCallbackHandler: React.FC = () => {
@@ -127,13 +127,11 @@ export const LineCallbackHandler: React.FC = () => {
 
     const redirectUri = getActiveLineCallbackUrl();
 
-    fetch(getApiUrl('/api/line/callback'), {
+    safeFetchJson(getApiUrl('/api/line/callback'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code, redirectUri }),
-    })
-      .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
-      .then(async ({ ok, data }) => {
+    }).then(async ({ ok, data }) => {
         if (ok && data.success) {
           const profile = {
             lineUserId: data.lineUserId,
