@@ -1,47 +1,41 @@
+import { getApiUrl, getExpressBackendOrigin } from './apiUtils';
+
 /**
- * Triggers direct redirect to LINE's official OAuth Login authorization page.
- * Uses a popup or top window to avoid X-Frame-Options: DENY restriction inside iframe.
+ * Returns the active LINE OAuth Callback URL pointing strictly to Express server container.
  */
-export const triggerLineLogin = async (
-  onOpenLineGuide?: () => void,
-  onOpenAuthFallback?: () => void
-) => {
+export const getActiveLineCallbackUrl = (): string => {
+  return 'https://ais-dev-olsgx3yczrx7ghc5qkwxao-603131036827.asia-southeast1.run.app/api/auth/line/callback';
+};
+
+/**
+ * Triggers LINE OAuth Login using window.open(authUrl, '_blank')
+ * to avoid X-Frame-Options restrictions when running inside an iframe.
+ */
+export const loginWithLinePopup = async (_arg1?: any, _arg2?: any) => {
   try {
-    const redirectUri = `${window.location.origin}/auth/line/callback`;
-    const res = await fetch(`/api/line/login-url?redirect_uri=${encodeURIComponent(redirectUri)}`);
+    const clientOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+    const endpoint = getApiUrl(`/api/line/login-url?client_origin=${encodeURIComponent(clientOrigin)}`);
+    
+    const res = await fetch(endpoint);
     const data = await res.json();
 
-    if (res.ok && data.loginUrl) {
-      // Calculate popup dimensions & center screen position
-      const width = 520;
-      const height = 680;
-      const left = window.screenX + Math.max(0, (window.innerWidth - width) / 2);
-      const top = window.screenY + Math.max(0, (window.innerHeight - height) / 2);
-
-      // Open popup window to bypass iframe X-Frame-Options blocking
-      const popup = window.open(
-        data.loginUrl,
-        'LineLoginPopup',
-        `width=${width},height=${height},top=${top},left=${left},scrollbars=yes,status=no,toolbar=no,menubar=no`
-      );
-
-      // If browser popup blocker blocked popup window, open in new tab
-      if (!popup || popup.closed || typeof popup.closed === 'undefined') {
-        window.open(data.loginUrl, '_blank');
-      }
+    if (data?.loginUrl) {
+      // Open in a new window/tab to prevent X-Frame-Options iframe errors
+      window.open(data.loginUrl, '_blank');
+    } else if (data?.error) {
+      alert(`LINE Login Error: ${data.error}`);
     } else {
-      if (data.error && data.error.includes('Channel ID')) {
-        if (onOpenLineGuide) {
-          onOpenLineGuide();
-        } else if (onOpenAuthFallback) {
-          onOpenAuthFallback();
-        }
-      } else {
-        if (onOpenAuthFallback) onOpenAuthFallback();
-      }
+      throw new Error('ไม่สามารถรับ URL สำหรับเข้าสู่ระบบ LINE ได้');
     }
   } catch (err: any) {
-    console.warn('LINE Login Redirect Notice:', err);
-    if (onOpenAuthFallback) onOpenAuthFallback();
+    console.error('Failed to trigger LINE login popup:', err);
+    alert('เกิดข้อผิดพลาดในการเปิดหน้า LINE Login: ' + (err.message || String(err)));
   }
+};
+
+/**
+ * Direct trigger alias for backwards compatibility
+ */
+export const triggerLineLogin = async (customRedirectUriOrGuide?: any, onOpenAuthFallback?: any) => {
+  return loginWithLinePopup(customRedirectUriOrGuide, onOpenAuthFallback);
 };

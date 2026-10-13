@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useDuty } from '../context/DutyContext';
 import { CheckCircle2, AlertCircle, Loader2, Sparkles } from 'lucide-react';
+import { getApiUrl } from '../utils/apiUtils';
+import { getActiveLineCallbackUrl } from '../utils/lineAuthUtils';
 
 export const LineCallbackHandler: React.FC = () => {
   const { loginWithLine } = useDuty();
@@ -8,44 +10,114 @@ export const LineCallbackHandler: React.FC = () => {
   const [message, setMessage] = useState<string>('');
   const [userName, setUserName] = useState<string>('');
 
-  // 1. Listen for postMessage from popup window (if this is the parent window)
+  const handleProfileSuccess = async (profile: { lineUserId: string; displayName?: string; pictureUrl?: string }) => {
+    try {
+      setStatus('loading');
+      setMessage('กำลังประมวลผลข้อมูลสมาชิก LINE...');
+      const res = await loginWithLine({
+        lineUserId: profile.lineUserId,
+        displayName: profile.displayName || 'LINE User',
+        pictureUrl: profile.pictureUrl,
+      });
+
+      if (!res.isNewUser && res.user) {
+        setStatus('success');
+        setUserName(res.user.name || profile.displayName || 'สมาชิก');
+        setMessage(`เข้าสู่ระบบผ่าน LINE สำเร็จ! ยินดีต้อนรับคุณ ${res.user.name || profile.displayName}`);
+
+        setTimeout(() => {
+          setStatus('idle');
+        }, 4000);
+      } else {
+        // New user: LineProfileSetupModal opens automatically in DutyContext
+        setStatus('idle');
+      }
+    } catch (err: any) {
+      console.warn('LINE login handling error:', err);
+      setStatus('error');
+      setMessage('ไม่สามารถเข้าสู่ระบบผ่าน LINE ได้: ' + (err.message || String(err)));
+    }
+  };
+
+  // 1. Listen for postMessage from popup window, BroadcastChannel, and localStorage
   useEffect(() => {
+    // A. postMessage handler
     const handleMessage = async (event: MessageEvent) => {
       if (event.data && event.data.type === 'LINE_LOGIN_SUCCESS' && event.data.profile) {
-        const profile = event.data.profile;
+        await handleProfileSuccess(event.data.profile);
+      }
+    };
+    window.addEventListener('message', handleMessage);
+
+    // B. BroadcastChannel handler
+    let bc: BroadcastChannel | null = null;
+    try {
+      bc = new BroadcastChannel('line_oauth_channel');
+      bc.onmessage = (event) => {
+        if (event.data && event.data.type === 'LINE_LOGIN_SUCCESS' && event.data.profile) {
+          handleProfileSuccess(event.data.profile);
+        }
+      };
+    } catch (e) {
+      console.warn('BroadcastChannel not supported:', e);
+    }
+
+    // C. Storage listener
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'line_oauth_success' && e.newValue) {
         try {
-          const res = await loginWithLine({
-            lineUserId: profile.lineUserId,
-            displayName: profile.displayName || 'LINE User',
-            pictureUrl: profile.pictureUrl,
-          });
-
-          if (!res.isNewUser && res.user) {
-            setStatus('success');
-            setUserName(res.user.name || profile.displayName);
-            setMessage(`เข้าสู่ระบบผ่าน LINE OA สำเร็จ! ยินดีต้อนรับคุณ ${res.user.name || profile.displayName}`);
-
-            setTimeout(() => {
-              setStatus('idle');
-            }, 4000);
-          } else {
-            // New user: LineProfileSetupModal opens automatically
-            setStatus('idle');
+          const parsed = JSON.parse(e.newValue);
+          if (parsed?.profile) {
+            localStorage.removeItem('line_oauth_success');
+            handleProfileSuccess(parsed.profile);
           }
-        } catch (err: any) {
-          console.warn('LINE login handling error:', err);
-          setStatus('idle');
+        } catch (err) {
+          console.warn('Failed to parse line_oauth_success from storage:', err);
         }
       }
     };
+    window.addEventListener('storage', handleStorage);
 
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
+    // D. Initial check on mount for localStorage item
+    try {
+      const stored = localStorage.getItem('line_oauth_success');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed?.profile && Date.now() - (parsed.ts || 0) < 60000) {
+          localStorage.removeItem('line_oauth_success');
+          handleProfileSuccess(parsed.profile);
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to check initial line_oauth_success:', e);
+    }
+
+    return () => {
+      window.removeEventListener('message', handleMessage);
+      window.removeEventListener('storage', handleStorage);
+      if (bc) bc.close();
+    };
   }, [loginWithLine]);
 
-  // 2. Handle OAuth authorization code callback in current window / popup window
+  // 2. Handle line_login_profile redirect or OAuth code directly in current window
   useEffect(() => {
     const searchParams = new URLSearchParams(window.location.search);
+    const lineProfileParam = searchParams.get('line_login_profile');
+    if (lineProfileParam) {
+      try {
+        const profile = JSON.parse(decodeURIComponent(lineProfileParam));
+        if (profile && profile.lineUserId) {
+          // Clean URL parameters cleanly
+          const cleanSearch = window.location.search.replace(/([?&])line_login_profile=[^&]+(&|$)/, '$1').replace(/[?&]$/, '');
+          window.history.replaceState({}, document.title, window.location.pathname + (cleanSearch ? '?' + cleanSearch : ''));
+          handleProfileSuccess(profile);
+          return;
+        }
+      } catch (err) {
+        console.warn('Failed to parse line_login_profile from URL:', err);
+      }
+    }
+
     const code = searchParams.get('code');
 
     if (!code) return;
@@ -53,9 +125,9 @@ export const LineCallbackHandler: React.FC = () => {
     setStatus('loading');
     setMessage('กำลังตรวจสอบรหัสยืนยันตัวตนกับ LINE OA...');
 
-    const redirectUri = `${window.location.origin}/auth/line/callback`;
+    const redirectUri = getActiveLineCallbackUrl();
 
-    fetch('/api/line/callback', {
+    fetch(getApiUrl('/api/line/callback'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code, redirectUri }),
@@ -69,13 +141,14 @@ export const LineCallbackHandler: React.FC = () => {
             pictureUrl: data.pictureUrl,
           };
 
-          // If this is running in a popup window with an opener, post back to parent window & close popup
+          // Clean URL parameters cleanly
+          const cleanPath = window.location.pathname.replace('/auth/line/callback', '/');
+          window.history.replaceState({}, document.title, cleanPath || '/');
+
+          // If popup with opener, notify and close
           if (window.opener && !window.opener.closed) {
             try {
-              window.opener.postMessage(
-                { type: 'LINE_LOGIN_SUCCESS', profile },
-                '*'
-              );
+              window.opener.postMessage({ type: 'LINE_LOGIN_SUCCESS', profile }, '*');
               window.close();
               return;
             } catch (err) {
@@ -83,28 +156,7 @@ export const LineCallbackHandler: React.FC = () => {
             }
           }
 
-          // Otherwise handle login directly in this window
-          const res = await loginWithLine(profile);
-
-          if (!res.isNewUser && res.user) {
-            setStatus('success');
-            setUserName(res.user.name || data.displayName);
-            setMessage(`เข้าสู่ระบบผ่าน LINE OA สำเร็จ! ยินดีต้อนรับคุณ ${res.user.name || data.displayName}`);
-
-            // Clean URL params cleanly
-            const cleanPath = window.location.pathname.replace('/auth/line/callback', '/');
-            window.history.replaceState({}, document.title, cleanPath || '/');
-
-            // Auto hide banner after 4 seconds
-            setTimeout(() => {
-              setStatus('idle');
-            }, 4000);
-          } else {
-            // Clean URL params and open LineProfileSetupModal
-            const cleanPath = window.location.pathname.replace('/auth/line/callback', '/');
-            window.history.replaceState({}, document.title, cleanPath || '/');
-            setStatus('idle');
-          }
+          await handleProfileSuccess(profile);
         } else {
           setStatus('error');
           setMessage(data.error || 'ไม่สามารถยืนยันตัวตนกับ LINE ได้ กรุณาลองใหม่อีกครั้ง');

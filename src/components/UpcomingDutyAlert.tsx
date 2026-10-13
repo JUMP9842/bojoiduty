@@ -1,33 +1,24 @@
 import React, { useState, useMemo } from 'react';
 import { useDuty } from '../context/DutyContext';
 import { getShiftMorningUserId, getShiftEveningUserId } from '../utils/shiftUtils';
+import { getApiUrl } from '../utils/apiUtils';
 import {
   Bell,
   Calendar,
-  Send,
   CheckCircle2,
   AlertCircle,
   MessageSquare,
   Sparkles,
-  Link as LinkIcon,
-  Clock,
-  ChevronRight,
-  Sun,
-  Moon,
-  Bath,
 } from 'lucide-react';
 
 export const UpcomingDutyAlert: React.FC = () => {
-  const { currentUser, shifts, bathingSchedules, updateUser } = useDuty();
+  const { currentUser, shifts } = useDuty();
 
   const [isSending, setIsSending] = useState(false);
   const [notificationStatus, setNotificationStatus] = useState<{
     type: 'success' | 'error';
     msg: string;
   } | null>(null);
-
-  const [showLinkInput, setShowLinkInput] = useState(false);
-  const [inputLineUserId, setInputLineUserId] = useState('');
 
   // Calculate upcoming shifts for the current user in the next 7 days
   const upcomingDuties = useMemo(() => {
@@ -42,6 +33,7 @@ export const UpcomingDutyAlert: React.FC = () => {
       type: 'daily' | 'bathing';
       parts: string[];
       daysAway: number;
+      note?: string;
     }> = [];
 
     for (let i = 0; i <= 7; i++) {
@@ -79,6 +71,7 @@ export const UpcomingDutyAlert: React.FC = () => {
             type: 'daily',
             parts,
             daysAway: i,
+            note: daily.notes || '',
           });
         }
       }
@@ -92,6 +85,7 @@ export const UpcomingDutyAlert: React.FC = () => {
           type: 'bathing',
           parts: ['🛁 อาบน้ำดูแลสุนัข'],
           daysAway: i,
+          note: bathing.notes || '',
         });
       }
     }
@@ -103,7 +97,10 @@ export const UpcomingDutyAlert: React.FC = () => {
 
   const handleSendLineNotification = async () => {
     if (!currentUser.lineUserId) {
-      setShowLinkInput(true);
+      setNotificationStatus({
+        type: 'error',
+        msg: 'กรุณาตั้งค่าเชื่อมต่อ LINE User ID ของคุณในเมนูการตั้งค่าโปรไฟล์ (ปุ่มโปรไฟล์/ตั้งค่าด้านบนขวา) ก่อนส่งแจ้งเตือน',
+      });
       return;
     }
 
@@ -114,18 +111,22 @@ export const UpcomingDutyAlert: React.FC = () => {
       const dutySummary = upcomingDuties
         .map((d) => {
           const label = d.daysAway === 0 ? 'วันนี้' : d.daysAway === 1 ? 'พรุ่งนี้' : `อีก ${d.daysAway} วัน`;
-          return `📅 ${label} (${d.formattedDate}): ${d.parts.join(', ')}`;
+          let text = `📅 ${label} (${d.formattedDate}): ${d.parts.join(', ')}`;
+          if (d.note) {
+            text += `\n   📝 โน้ต: ${d.note}`;
+          }
+          return text;
         })
-        .join('\n');
+        .join('\n\n');
 
       const messageText =
         `🐶 [BojoiDuty Notification]\n` +
         `สวัสดีครับคุณ ${currentUser.nickname || currentUser.name}\n` +
         `แจ้งเตือนตารางเวรที่ใกล้จะถึงของคุณ:\n\n` +
         (dutySummary || 'ไม่มีเวรใน 7 วันนี้') +
-        `\n\nเข้าดูปฏิทินแบบเต็มได้ที่เว็บไซต์ BojoiDuty`;
+        `\n\n✨ สู้ ๆ นะครับ น้องหมารออยู่! 🐾\nเข้าดูปฏิทินแบบเต็มได้ที่เว็บไซต์ BojoiDuty`;
 
-      const res = await fetch('/api/line/push-notification', {
+      const res = await fetch(getApiUrl('/api/line/push-notification'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -138,7 +139,7 @@ export const UpcomingDutyAlert: React.FC = () => {
       if (res.ok && data.success) {
         setNotificationStatus({
           type: 'success',
-          msg: 'ส่งแจ้งเตือนเตือนเวรเข้าแอป LINE ของคุณสำเร็จเรียบร้อย!',
+          msg: 'ส่งแจ้งเตือนตารางเวร (พร้อมโน้ต) เข้า LINE ของคุณสำเร็จเรียบร้อย!',
         });
       } else {
         setNotificationStatus({
@@ -161,7 +162,7 @@ export const UpcomingDutyAlert: React.FC = () => {
     setNotificationStatus(null);
 
     try {
-      const res = await fetch('/api/line/trigger-scheduled-reminders', {
+      const res = await fetch(getApiUrl('/api/line/trigger-scheduled-reminders'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ force: true }),
@@ -171,7 +172,7 @@ export const UpcomingDutyAlert: React.FC = () => {
       if (res.ok && data.success) {
         setNotificationStatus({
           type: 'success',
-          msg: `🎉 ตรวจสอบและส่งการแจ้งเตือนสเกตดูลล่วงหน้า (D-3, D-1, วันนี้ + ประกาศ) ไปแล้ว ${data.sentCount} ข้อความ`,
+          msg: `🎉 ตรวจสอบและส่งการแจ้งเตือนสเกตดูลล่วงหน้า (D-3, D-1, วันนี้พร้อมโน้ตและประกาศ) ไปแล้ว ${data.sentCount} ข้อความ`,
         });
       } else {
         setNotificationStatus({
@@ -187,24 +188,6 @@ export const UpcomingDutyAlert: React.FC = () => {
     } finally {
       setIsSending(false);
     }
-  };
-
-  const handleSaveLineUserId = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!inputLineUserId.trim()) return;
-
-    updateUser({
-      ...currentUser,
-      lineUserId: inputLineUserId.trim(),
-      lineConnectedAt: new Date().toISOString(),
-      lineNotificationEnabled: true,
-    });
-
-    setShowLinkInput(false);
-    setNotificationStatus({
-      type: 'success',
-      msg: 'ผูกบัญชี LINE User ID สำเร็จแล้ว!',
-    });
   };
 
   return (
@@ -229,7 +212,7 @@ export const UpcomingDutyAlert: React.FC = () => {
             ) : (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-900 text-[10px] font-bold border border-amber-300">
                 <AlertCircle className="w-3 h-3 text-amber-600" />
-                <span>ยังไม่ได้ใส่ LINE User ID</span>
+                <span>ยังไม่ได้ใส่ LINE User ID (ไปตั้งค่าได้ที่เมนูโปรไฟล์)</span>
               </span>
             )}
           </div>
@@ -262,8 +245,13 @@ export const UpcomingDutyAlert: React.FC = () => {
                         ? '⚡ เวรพรุ่งนี้!'
                         : `อีก ${item.daysAway} วัน (${item.formattedDate})`}
                     </div>
-                    <div className="text-[11px] font-bold">
-                      {item.parts.join(', ')}
+                    <div className="text-[11px] font-bold flex items-center gap-1">
+                      <span>{item.parts.join(', ')}</span>
+                      {item.note && (
+                        <span className="text-[10px] bg-amber-100 text-amber-900 px-1.5 py-0.2 rounded font-semibold" title={item.note}>
+                          📝 มีโน้ต
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -278,65 +266,26 @@ export const UpcomingDutyAlert: React.FC = () => {
 
         {/* Right Actions: Send LINE Notification Button */}
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0 pt-2 lg:pt-0 border-t lg:border-t-0 border-emerald-200/60">
-          {!showLinkInput ? (
-            <>
-              <button
-                type="button"
-                onClick={handleSendLineNotification}
-                disabled={isSending}
-                className="px-3.5 py-2 rounded-xl bg-[#06C755] hover:bg-[#00B900] active:scale-95 text-white font-extrabold text-xs shadow-md transition-all flex items-center justify-center gap-1.5 border border-emerald-600 cursor-pointer"
-              >
-                <MessageSquare className="w-4 h-4 fill-white" />
-                <span>{isSending ? 'กำลังส่ง...' : '📲 เตือนฉันเข้า LINE'}</span>
-              </button>
+          <button
+            type="button"
+            onClick={handleSendLineNotification}
+            disabled={isSending}
+            className="px-3.5 py-2 rounded-xl bg-[#06C755] hover:bg-[#00B900] active:scale-95 text-white font-extrabold text-xs shadow-md transition-all flex items-center justify-center gap-1.5 border border-emerald-600 cursor-pointer"
+          >
+            <MessageSquare className="w-4 h-4 fill-white" />
+            <span>{isSending ? 'กำลังส่ง...' : '📲 เตือนฉันเข้า LINE (พร้อมโน้ต)'}</span>
+          </button>
 
-              <button
-                type="button"
-                onClick={handleTriggerScheduledReminders}
-                disabled={isSending}
-                className="px-3 py-2 rounded-xl bg-white hover:bg-emerald-50 text-emerald-900 border border-emerald-300 font-bold text-xs shadow-2xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-                title="กดทดสอบส่งการแจ้งเตือนรอบสเกตดูลอัตโนมัติ (ล่วงหน้า 3 วัน, 1 วัน, และวันนี้พร้อมประกาศ)"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                <span>⚡ รันสเกตดูลเตือน (3 วัน/1 วัน/วันนี้+ประกาศ)</span>
-              </button>
-            </>
-          ) : (
-            <form onSubmit={handleSaveLineUserId} className="flex items-center gap-2 bg-white p-1 rounded-xl border border-emerald-300 shadow-xs">
-              <input
-                type="text"
-                required
-                placeholder="วาง LINE User ID..."
-                value={inputLineUserId}
-                onChange={(e) => setInputLineUserId(e.target.value)}
-                className="px-2 py-1 text-xs font-mono font-bold rounded-lg border border-neutral-200 text-neutral-900 focus:outline-hidden focus:border-[#06C755] w-48"
-              />
-              <button
-                type="submit"
-                className="px-3 py-1 rounded-lg bg-[#06C755] text-white font-extrabold text-xs cursor-pointer hover:bg-[#00B900]"
-              >
-                บันทึก
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowLinkInput(false)}
-                className="px-2 py-1 text-xs text-neutral-500 hover:text-neutral-800"
-              >
-                ยกเลิก
-              </button>
-            </form>
-          )}
-
-          {!currentUser.lineUserId && !showLinkInput && (
-            <button
-              type="button"
-              onClick={() => setShowLinkInput(true)}
-              className="px-3 py-2 rounded-xl bg-white hover:bg-neutral-100 text-neutral-800 text-xs font-bold border border-neutral-300 shadow-2xs flex items-center justify-center gap-1.5 cursor-pointer"
-            >
-              <LinkIcon className="w-3.5 h-3.5 text-[#06C755]" />
-              <span>ผูก LINE ID</span>
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={handleTriggerScheduledReminders}
+            disabled={isSending}
+            className="px-3 py-2 rounded-xl bg-white hover:bg-emerald-50 text-emerald-900 border border-emerald-300 font-bold text-xs shadow-2xs transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+            title="กดทดสอบส่งการแจ้งเตือนรอบสเกตดูลอัตโนมัติ (ล่วงหน้า 3 วัน, 1 วัน, และวันนี้พร้อมโน้ตและประกาศ)"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+            <span>⚡ รันสเกตดูลเตือน (พร้อมโน้ต)</span>
+          </button>
         </div>
       </div>
 

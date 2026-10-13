@@ -1,32 +1,28 @@
 import React from 'react';
 import { useDuty } from '../context/DutyContext';
-import { Settings, LogOut, MessageSquare, Bot } from 'lucide-react';
+import { Settings, LogOut, MessageSquare } from 'lucide-react';
 import { triggerLineLogin } from '../utils/lineAuthUtils';
-import { FluffyBlackDogLogo } from './FluffyBlackDogLogo';
 
 interface HeaderProps {
   onOpenBackend: () => void;
   onOpenAuth: () => void;
-  onOpenLineGuide?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   onOpenBackend,
   onOpenAuth,
-  onOpenLineGuide,
 }) => {
   const { currentUser, logout } = useDuty();
 
   const handleLineClick = () => {
-    triggerLineLogin(onOpenLineGuide, onOpenAuth);
+    triggerLineLogin(onOpenAuth);
   };
 
   return (
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-[#FFC067]/60 px-4 sm:px-8 py-3 transition-all shadow-xs">
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
-        {/* Logo & Brand: BojoiDuty */}
+        {/* Brand: BojoiDuty */}
         <div className="flex items-center gap-2.5">
-          <FluffyBlackDogLogo className="w-9 h-9 drop-shadow-xs" />
           <div>
             <h1 className="text-base font-extrabold tracking-tight text-neutral-900">
               BojoiDuty

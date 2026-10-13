@@ -10,7 +10,6 @@ import { SwapModal } from './components/SwapModal';
 import { AuthModal } from './components/AuthModal';
 import { DeviceVerificationModal } from './components/DeviceVerificationModal';
 import { UpcomingDutyAlert } from './components/UpcomingDutyAlert';
-import { LineOAGuideModal } from './components/LineOAGuideModal';
 import { LineCallbackHandler } from './components/LineCallbackHandler';
 import { LineProfileSetupModal } from './components/LineProfileSetupModal';
 
@@ -18,7 +17,6 @@ function MainApp() {
   const [isBackendOpen, setIsBackendOpen] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [isSwapModalOpen, setIsSwapModalOpen] = useState(false);
-  const [isLineGuideOpen, setIsLineGuideOpen] = useState(false);
 
   // Swap prefill data
   const [swapPrefill, setSwapPrefill] = useState<{
@@ -58,7 +56,6 @@ function MainApp() {
       <Header
         onOpenBackend={() => setIsBackendOpen(true)}
         onOpenAuth={() => setIsAuthOpen(true)}
-        onOpenLineGuide={() => setIsLineGuideOpen(true)}
       />
 
       {/* Main Content Area */}
@@ -103,15 +100,6 @@ function MainApp() {
       <AuthModal
         isOpen={isAuthOpen}
         onClose={() => setIsAuthOpen(false)}
-        onOpenLineGuide={() => {
-          setIsAuthOpen(false);
-          setIsLineGuideOpen(true);
-        }}
-      />
-
-      <LineOAGuideModal
-        isOpen={isLineGuideOpen}
-        onClose={() => setIsLineGuideOpen(false)}
       />
 
       <SwapModal

@@ -8,14 +8,12 @@ interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
   defaultMode?: 'login' | 'register' | 'edit_profile';
-  onOpenLineGuide?: () => void;
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({
   isOpen,
   onClose,
   defaultMode = 'login',
-  onOpenLineGuide,
 }) => {
   const { login, register, currentUser, updateUser, users } = useDuty();
   const [mode, setMode] = useState<'login' | 'register' | 'edit_profile'>(defaultMode);
@@ -25,6 +23,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [confirmPassword, setConfirmPassword] = useState('');
   const [selectedColor, setSelectedColor] = useState(AVAILABLE_COLORS[0]);
   const [selectedIcon, setSelectedIcon] = useState(AVAILABLE_ICONS[0]);
+  const [lineUserIdInput, setLineUserIdInput] = useState('');
+  const [lineNotifEnabled, setLineNotifEnabled] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
@@ -36,6 +36,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setConfirmPassword(currentUser.password || '');
       setSelectedColor(currentUser.color || AVAILABLE_COLORS[0]);
       setSelectedIcon(currentUser.icon || AVAILABLE_ICONS[0]);
+      setLineUserIdInput(currentUser.lineUserId || '');
+      setLineNotifEnabled(currentUser.lineNotificationEnabled ?? true);
     }
   }, [currentUser, mode]);
 
@@ -87,8 +89,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         bgLight: `${selectedColor}15`,
         borderLight: `${selectedColor}40`,
         icon: selectedIcon,
+        lineUserId: lineUserIdInput.trim() || undefined,
+        lineNotificationEnabled: lineNotifEnabled,
       });
-      setSuccessMsg('บันทึกข้อมูลรหัสผ่าน LINE OA เรียบร้อยแล้ว!');
+      setSuccessMsg('บันทึกข้อมูลโปรไฟล์และการตั้งค่า LINE เรียบร้อยแล้ว!');
       setTimeout(() => {
         setSuccessMsg(null);
         onClose();
@@ -130,7 +134,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 </span>
               </div>
               <h3 className="text-sm font-extrabold text-neutral-900">
-                {mode === 'login' ? 'Login LINE' : 'แก้ไขโปรไฟล์'}
+                {mode === 'login' ? 'Login LINE' : 'ตั้งค่าโปรไฟล์'}
               </h3>
             </div>
           </div>
@@ -168,7 +172,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 }`}
               >
                 <Palette className="w-3.5 h-3.5 text-[#06C755]" />
-                <span>โปรไฟล์</span>
+                <span>การตั้งค่า</span>
               </button>
             )}
           </div>
@@ -203,8 +207,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <button
               type="button"
               onClick={() =>
-                triggerLineLogin(onOpenLineGuide, () =>
-                  setError('หาก Login LINE ไม่สำเร็จ สามารถเลือกบัญชีเจ้าหน้าที่เพื่อสลับบัญชีได้ทันที')
+                triggerLineLogin(() =>
+                  setError('หาก Login LINE ไม่สำเร็จ สามารถเลือกบัญชีเจ้าหน้าที่ด้านล่างได้ทันที')
                 )
               }
               className="w-full py-2.5 px-3 rounded-xl bg-[#06C755] hover:bg-[#00B900] active:scale-98 text-white font-extrabold text-xs shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer border border-emerald-600"
@@ -330,6 +334,39 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </div>
           )}
 
+          {/* LINE User ID & Notification Settings hidden under Edit Profile (Settings Menu) */}
+          {mode === 'edit_profile' && (
+            <div className="space-y-2.5 pt-3 border-t border-neutral-100 bg-emerald-50/40 p-3 rounded-xl border border-emerald-200/60">
+              <label className="block text-xs font-extrabold text-neutral-900 flex items-center gap-1.5">
+                <MessageSquare className="w-3.5 h-3.5 text-[#06C755]" />
+                <span>การตั้งค่า LINE ของคุณ (LINE User ID & Notifications)</span>
+              </label>
+
+              <div>
+                <label className="block text-[10px] font-bold text-neutral-600 mb-1">
+                  LINE User ID (สำหรับรับแจ้งเตือนเวรส่วนตัว)
+                </label>
+                <input
+                  type="text"
+                  placeholder="วาง LINE User ID (เช่น U12345...)"
+                  value={lineUserIdInput}
+                  onChange={(e) => setLineUserIdInput(e.target.value)}
+                  className="w-full px-2.5 py-1.5 text-xs font-mono font-bold rounded-xl bg-white border border-neutral-200 focus:border-[#06C755] focus:outline-hidden text-neutral-900"
+                />
+              </div>
+
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={lineNotifEnabled}
+                  onChange={(e) => setLineNotifEnabled(e.target.checked)}
+                  className="w-4 h-4 rounded text-[#06C755] focus:ring-[#06C755]"
+                />
+                <span className="text-xs font-semibold text-neutral-700">เปิดใช้งานรับการแจ้งเตือนเวรผ่าน LINE</span>
+              </label>
+            </div>
+          )}
+
           <div className="pt-2 flex items-center justify-between gap-2">
             <span className="text-[10px] text-neutral-400">
               🟢 รองรับการเข้าใช้งาน LINE OA
@@ -361,7 +398,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 ) : (
                   <>
                     <Palette className="w-3.5 h-3.5" />
-                    <span>บันทึกการแก้ไข</span>
+                    <span>บันทึกการตั้งค่า</span>
                   </>
                 )}
               </button>

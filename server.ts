@@ -3,9 +3,10 @@ import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import localtunnel from 'localtunnel';
+import { tunnelmole } from 'tunnelmole';
 import fs from 'fs';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, getDocs } from 'firebase/firestore';
+import { getFirestore, collection, getDocs, doc, setDoc } from 'firebase/firestore';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -14,10 +15,12 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const LOCALTUNNEL_SUBDOMAIN = process.env.LOCALTUNNEL_SUBDOMAIN || 'pawsduty-duty';
 
+const DEV_SERVER_URL = 'https://ais-dev-olsgx3yczrx7ghc5qkwxao-603131036827.asia-southeast1.run.app';
+
 let tunnelStatus = {
   active: false,
-  url: `https://${LOCALTUNNEL_SUBDOMAIN}.loca.lt`,
-  webhookUrl: `https://${LOCALTUNNEL_SUBDOMAIN}.loca.lt/api/line/webhook`,
+  url: DEV_SERVER_URL,
+  webhookUrl: `${DEV_SERVER_URL}/api/line/webhook`,
   lastError: null as string | null,
 };
 
@@ -37,6 +40,24 @@ try {
 
 app.use(express.json());
 
+// 1. Enable CORS for dual domain routing (ais-dev Express Container vs ais-pre Static CDN)
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+
+  if (req.method === 'OPTIONS') {
+    return res.status(200).end();
+  }
+  next();
+});
+
 // Permanent LINE OA configuration store
 const DEFAULT_LINE_CONFIG = {
   lineChannelId: '2011986358',
@@ -52,6 +73,60 @@ let lineConfig = {
   lineAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN || DEFAULT_LINE_CONFIG.lineAccessToken,
   liffId: process.env.VITE_LINE_LIFF_ID || DEFAULT_LINE_CONFIG.liffId,
 };
+
+// Automatic Webhook URL Sync Function (PUT https://api.line.me/v2/bot/channel/webhook/endpoint)
+async function syncLineWebhookUrl(customHostUrl?: string) {
+  if (!lineConfig.lineAccessToken || lineConfig.lineAccessToken.length < 50) {
+    console.log('[Auto Webhook Sync Notice]: Valid LINE Access Token not set');
+    return false;
+  }
+
+  try {
+    const host = customHostUrl || tunnelStatus.url || DEV_SERVER_URL;
+    const targetWebhookUrl = `${host}/api/line/webhook`;
+
+    console.log(`[LINE Syncing Webhook] -> Registering Webhook URL at LINE Console: ${targetWebhookUrl}`);
+
+    const response = await fetch('https://api.line.me/v2/bot/channel/webhook/endpoint', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${lineConfig.lineAccessToken}`,
+      },
+      body: JSON.stringify({ endpoint: targetWebhookUrl }),
+    });
+
+    if (response.ok) {
+      console.log(`✅ LINE Webhook URL automatically updated at LINE Console: ${targetWebhookUrl}`);
+      return true;
+    } else {
+      const errJson = await response.json().catch(() => ({}));
+      console.warn('⚠️ LINE Webhook Sync Notice:', errJson?.message || response.statusText);
+      return false;
+    }
+  } catch (err: any) {
+    console.warn('⚠️ LINE Webhook Sync Error:', err.message);
+    return false;
+  }
+}
+
+// Helper: Remove invalid or self target user ID from Subscribers
+async function removeInvalidLineSubscriber(lineUserId: string) {
+  if (!serverDb || !lineUserId) return;
+  try {
+    const usersSnap = await getDocs(collection(serverDb, 'users'));
+    for (const d of usersSnap.docs) {
+      const data = d.data();
+      if (data.lineUserId === lineUserId) {
+        console.log(`[LINE Cleanup]: Removing invalid lineUserId from user ${d.id}`);
+        const ref = doc(serverDb, 'users', d.id);
+        await setDoc(ref, { ...data, lineUserId: null, lineConnectedAt: null });
+      }
+    }
+  } catch (err: any) {
+    console.warn('[LINE Cleanup Error]:', err.message);
+  }
+}
 
 // API: Get LINE OA Config & Webhook status
 app.get('/api/line/config', (req, res) => {
@@ -80,13 +155,17 @@ app.get('/api/line/tunnel-status', (req, res) => {
 });
 
 // API: Update LINE OA Config
-app.post('/api/line/config', (req, res) => {
+app.post('/api/line/config', async (req, res) => {
   const { lineChannelId, lineChannelSecret, lineAccessToken, liffId } = req.body;
 
   if (lineChannelId !== undefined) lineConfig.lineChannelId = lineChannelId.trim();
   if (lineChannelSecret !== undefined) lineConfig.lineChannelSecret = lineChannelSecret.trim();
   if (lineAccessToken !== undefined) lineConfig.lineAccessToken = lineAccessToken.trim();
   if (liffId !== undefined) lineConfig.liffId = liffId.trim();
+
+  // Auto sync webhook URL to LINE Console
+  const serverHost = `${req.protocol}://${req.get('host')}`;
+  await syncLineWebhookUrl(serverHost);
 
   res.json({
     success: true,
@@ -101,8 +180,11 @@ app.post('/api/line/config', (req, res) => {
 
 // API: Get LINE OAuth Login URL
 app.get('/api/line/login-url', (req, res) => {
-  const redirectUri = req.query.redirect_uri as string || `${req.protocol}://${req.get('host')}/auth/line/callback`;
-  const state = Math.random().toString(36).substring(2, 15);
+  const clientOrigin = (req.query.client_origin as string) || (req.get('origin') as string) || `${req.protocol}://${req.get('host')}`;
+  
+  // Callback URL is strictly on the stable DEV_SERVER_URL registered in LINE Console
+  const redirectUri = `${DEV_SERVER_URL}/api/auth/line/callback`;
+  const state = encodeURIComponent(clientOrigin);
 
   if (!lineConfig.lineChannelId) {
     return res.status(400).json({
@@ -122,22 +204,55 @@ app.get('/api/line/login-url', (req, res) => {
   res.json({ loginUrl, state, redirectUri });
 });
 
-// API: LINE Login OAuth Callback - Exchange authorization code for profile
-app.post('/api/line/callback', async (req, res) => {
+// API: LINE Login OAuth Callback handler
+async function handleLineOAuthCallback(req: express.Request, res: express.Response) {
   try {
-    const { code, redirectUri } = req.body;
+    const code = req.query.code as string || req.body?.code;
+    const state = req.query.state as string || req.body?.state;
+    const error = req.query.error as string;
+    const errorDescription = req.query.error_description as string;
 
-    if (!code) {
-      return res.status(400).json({ error: 'Missing authorization code' });
+    // Determine client origin where user clicked login
+    let clientOrigin = `${req.protocol}://${req.get('host')}`;
+    if (state) {
+      try {
+        const decodedState = decodeURIComponent(state);
+        if (decodedState.startsWith('http://') || decodedState.startsWith('https://')) {
+          clientOrigin = decodedState;
+        }
+      } catch {}
     }
+
+    // Handle OAuth error return
+    if (error || !code) {
+      const errMsg = errorDescription || error || 'Missing authorization code';
+      if (req.method === 'POST') {
+        return res.status(400).json({ error: errMsg });
+      }
+      return res.status(400).send(`
+        <!DOCTYPE html>
+        <html>
+        <head><title>LINE Login Error</title><meta charset="utf-8" /></head>
+        <body style="font-family: sans-serif; text-align: center; padding: 40px; background: #fff5f5; color: #9b1c1c;">
+          <h2>❌ เข้าสู่ระบบ LINE ไม่สำเร็จ</h2>
+          <p>${errMsg}</p>
+          <script>
+            setTimeout(() => { window.location.href = "${clientOrigin}"; }, 3000);
+          </script>
+        </body>
+        </html>
+      `);
+    }
+
+    const redirectUri = req.body?.redirectUri || `${DEV_SERVER_URL}/api/auth/line/callback`;
 
     if (!lineConfig.lineChannelId || !lineConfig.lineChannelSecret) {
-      return res.status(400).json({
-        error: 'กรุณาตั้งค่า LINE Channel ID และ Channel Secret ก่อนใช้งาน LINE Login',
-      });
+      const errMsg = 'กรุณาตั้งค่า LINE Channel ID และ Channel Secret ก่อนใช้งาน LINE Login';
+      if (req.method === 'POST') return res.status(400).json({ error: errMsg });
+      return res.status(400).send(`<h2>❌ ${errMsg}</h2>`);
     }
 
-    // Exchange code for Token
+    // Exchange code for token
     const tokenParams = new URLSearchParams({
       grant_type: 'authorization_code',
       code,
@@ -153,10 +268,21 @@ app.post('/api/line/callback', async (req, res) => {
     });
 
     if (!tokenResponse.ok) {
-      const errData = await tokenResponse.json();
-      return res.status(400).json({
-        error: 'LINE Token Error: ' + (errData.error_description || JSON.stringify(errData)),
-      });
+      const errData = await tokenResponse.json().catch(() => ({}));
+      const errMsg = 'LINE Token Error: ' + (errData.error_description || JSON.stringify(errData));
+      if (req.method === 'POST') return res.status(400).json({ error: errMsg });
+      return res.status(400).send(`
+        <!DOCTYPE html>
+        <html>
+        <head><title>LINE Token Error</title><meta charset="utf-8" /></head>
+        <body style="font-family: sans-serif; text-align: center; padding: 40px; background: #fff5f5;">
+          <h2 style="color: #9b1c1c;">❌ ${errMsg}</h2>
+          <script>
+            setTimeout(() => { window.location.href = "${clientOrigin}"; }, 3000);
+          </script>
+        </body>
+        </html>
+      `);
     }
 
     const tokenData = await tokenResponse.json();
@@ -168,23 +294,105 @@ app.post('/api/line/callback', async (req, res) => {
     });
 
     if (!profileResponse.ok) {
-      return res.status(400).json({ error: 'ไม่สามารถดึงข้อมูลโปรไฟล์จาก LINE ได้' });
+      const errMsg = 'ไม่สามารถดึงข้อมูลโปรไฟล์จาก LINE ได้';
+      if (req.method === 'POST') return res.status(400).json({ error: errMsg });
+      return res.status(400).send(`<h2>❌ ${errMsg}</h2>`);
     }
 
-    const profile = await profileResponse.json();
+    const profileData = await profileResponse.json();
+    const profile = {
+      lineUserId: profileData.userId,
+      displayName: profileData.displayName,
+      pictureUrl: profileData.pictureUrl,
+      statusMessage: profileData.statusMessage,
+    };
 
-    res.json({
-      success: true,
-      lineUserId: profile.userId,
-      displayName: profile.displayName,
-      pictureUrl: profile.pictureUrl,
-      statusMessage: profile.statusMessage,
-    });
+    if (req.method === 'POST') {
+      return res.json({ success: true, ...profile });
+    }
+
+    // HTML response broadcasting results back to client via postMessage, BroadcastChannel, and LocalStorage
+    res.status(200).send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>LINE Login Success</title>
+        <meta charset="utf-8" />
+        <style>
+          body { font-family: system-ui, -apple-system, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; background-color: #f0fdf4; color: #166534; text-align: center; }
+          .card { background: white; padding: 32px; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); border: 2px solid #22c55e; max-width: 380px; width: 90%; }
+          .icon { font-size: 48px; margin-bottom: 12px; }
+          h2 { margin: 0 0 8px; font-size: 20px; color: #15803d; }
+          p { margin: 0; font-size: 14px; opacity: 0.85; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <div class="icon">🐶</div>
+          <h2>เข้าสู่ระบบ LINE สำเร็จ!</h2>
+          <p>ยินดีต้อนรับคุณ ${profile.displayName}</p>
+          <p style="margin-top: 12px; font-size: 12px; color: #65a30d;">กำลังนำท่านกลับสู่แอปพลิเคชัน...</p>
+        </div>
+        <script>
+          const profile = ${JSON.stringify(profile)};
+          const clientOrigin = "${clientOrigin}";
+          const profileParam = encodeURIComponent(JSON.stringify(profile));
+          const redirectUrl = clientOrigin.includes('?') 
+            ? clientOrigin + '&line_login_profile=' + profileParam 
+            : clientOrigin + '/?line_login_profile=' + profileParam;
+
+          // 1. PostMessage to opener window
+          try {
+            if (window.opener && !window.opener.closed) {
+              window.opener.postMessage({ type: 'LINE_LOGIN_SUCCESS', profile }, '*');
+            }
+          } catch(e){}
+
+          // 2. BroadcastChannel
+          try {
+            const bc = new BroadcastChannel('line_oauth_channel');
+            bc.postMessage({ type: 'LINE_LOGIN_SUCCESS', profile });
+            bc.close();
+          } catch(e){}
+
+          // 3. LocalStorage
+          try {
+            localStorage.setItem('line_oauth_success', JSON.stringify({ profile, ts: Date.now() }));
+          } catch(e){}
+
+          // Close popup or redirect to clientOrigin with profile parameter
+          setTimeout(() => {
+            if (window.opener && window.opener !== window) {
+              try {
+                window.opener.postMessage({ type: 'LINE_LOGIN_SUCCESS', profile }, '*');
+                window.close();
+              } catch(e) {}
+              setTimeout(() => {
+                if (!window.closed) {
+                  window.location.href = redirectUrl;
+                }
+              }, 400);
+            } else {
+              window.location.href = redirectUrl;
+            }
+          }, 800);
+        </script>
+      </body>
+      </html>
+    `);
   } catch (err: any) {
     console.error('LINE Callback Error:', err);
-    res.status(500).json({ error: err.message || 'Server error during LINE authentication' });
+    if (req.method === 'POST') {
+      res.status(500).json({ error: err.message || 'Server error during LINE authentication' });
+    } else {
+      res.status(500).send('Server Error during LINE OAuth Callback');
+    }
   }
-});
+}
+
+app.get('/api/auth/line/callback', handleLineOAuthCallback);
+app.get('/api/line/callback', handleLineOAuthCallback);
+app.post('/api/line/callback', handleLineOAuthCallback);
 
 // API: LINE Messaging API Webhook (รองรับการ Verify Webhook จาก LINE Developers Console และการตอบกลับ)
 app.get('/api/line/webhook', (req, res) => {
@@ -259,10 +467,6 @@ function getLineQuickReplyItems() {
 }
 
 // API: LINE Messaging API Webhook (รองรับการ Verify Webhook และการพิมพ์โต้ตอบถามเวร)
-app.get('/api/line/webhook', (req, res) => {
-  res.status(200).send('BojoiDuty LINE Webhook endpoint is active and ready.');
-});
-
 app.post('/api/line/webhook', async (req, res) => {
   try {
     const events = req.body?.events || [];
@@ -429,11 +633,18 @@ app.post('/api/line/webhook', async (req, res) => {
                 bathingText = `\n🛁 เวรอาบน้ำ: ${bUser ? bUser.nickname || bUser.name : 'มีนัดหมายอาบน้ำ'}`;
               }
 
+              let notesText = '';
+              const notesList = todayShifts.filter((s) => s.notes || s.note).map((s) => s.notes || s.note);
+              if (notesList.length > 0) {
+                notesText = `\n📝 โน้ตประจำวัน: ${notesList.join(', ')}`;
+              }
+
               replyText =
                 `🐶 [BojoiDuty] ตารางเวรประจำวันนี้ (${formatThaiDateDisplay(todayStr)}):\n\n` +
                 `☀️ เวรเช้า (08:00 - 12:00 น.): ${morningName}\n` +
                 `🌙 เวรเย็น (16:00 - 20:00 น.): ${eveningName}` +
                 bathingText +
+                notesText +
                 `\n\nอย่าลืมให้อาหารและพาน้องหมาไปวิ่งเล่นด้วยนะครับ 🐕`;
             } else {
               replyText = `🐶 [BojoiDuty] วันนี้ (${formatThaiDateDisplay(todayStr)}) ยังไม่มีผู้จองเวรครับ สมาชิกสามารถเข้าไปจองเวรได้ที่:\n🌐 ${hostUrl}`;
@@ -462,11 +673,18 @@ app.post('/api/line/webhook', async (req, res) => {
                 bathingText = `\n🛁 เวรอาบน้ำ: ${bUser ? bUser.nickname || bUser.name : 'มีนัดหมายอาบน้ำ'}`;
               }
 
+              let notesText = '';
+              const notesList = tmrShifts.filter((s) => s.notes || s.note).map((s) => s.notes || s.note);
+              if (notesList.length > 0) {
+                notesText = `\n📝 โน้ตประจำวัน: ${notesList.join(', ')}`;
+              }
+
               replyText =
                 `🐶 [BojoiDuty] ตารางเวรวันพรุ่งนี้ (${formatThaiDateDisplay(tomorrowStr)}):\n\n` +
                 `☀️ เวรเช้า (08:00 - 12:00 น.): ${morningName}\n` +
                 `🌙 เวรเย็น (16:00 - 20:00 น.): ${eveningName}` +
                 bathingText +
+                notesText +
                 `\n\nเตรียมตัวดูแลน้องหมากันนะครับ 🐾`;
             } else {
               replyText = `🐶 [BojoiDuty] วันพรุ่งนี้ (${formatThaiDateDisplay(tomorrowStr)}) ยังไม่มีผู้จองเวรครับ`;
@@ -833,13 +1051,57 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
-    startLocalTunnel();
+    startTunnel();
     // Run scheduled reminders check once on boot & every 1 hour
     setTimeout(() => checkAndSendScheduledReminders(), 10000);
     setInterval(() => checkAndSendScheduledReminders(), 3600000);
   });
+
+  server.on('error', (err: any) => {
+    if (err.code === 'EADDRINUSE') {
+      console.warn(`⚠️ Port ${PORT} is already in use. Retrying on port ${Number(PORT) + 1}...`);
+      const altPort = Number(PORT) + 1;
+      const altServer = app.listen(altPort, () => {
+        console.log(`🚀 Server running on alternative port ${altPort}`);
+        startTunnel();
+        setTimeout(() => checkAndSendScheduledReminders(), 10000);
+        setInterval(() => checkAndSendScheduledReminders(), 3600000);
+      });
+      altServer.on('error', (err2: any) => {
+        console.error('Alternative port also in use or failed:', err2);
+      });
+    } else {
+      console.error('Server error:', err);
+    }
+  });
+}
+
+async function startTunnel() {
+  try {
+    console.log('🚀 Starting Tunnelmole tunnel for LINE Webhook (No 302 Redirects)...');
+    const url = await tunnelmole({ port: Number(PORT) });
+    if (url && typeof url === 'string' && url.startsWith('http')) {
+      const httpsUrl = url.startsWith('http:') ? url.replace('http:', 'https:') : url;
+      tunnelStatus.active = true;
+      tunnelStatus.url = httpsUrl;
+      tunnelStatus.webhookUrl = `${httpsUrl}/api/line/webhook`;
+      tunnelStatus.lastError = null;
+
+      console.log(`🚀 Tunnelmole active at: ${httpsUrl}`);
+      console.log(`🔗 Active LINE Webhook URL: ${tunnelStatus.webhookUrl}`);
+
+      // Auto sync webhook URL with LINE Console
+      await syncLineWebhookUrl(httpsUrl);
+      return;
+    }
+  } catch (err: any) {
+    console.warn('⚠️ Tunnelmole notice:', err.message || err);
+  }
+
+  // Fallback to localtunnel
+  startLocalTunnel();
 }
 
 async function startLocalTunnel() {
@@ -855,25 +1117,27 @@ async function startLocalTunnel() {
     tunnelStatus.lastError = null;
 
     console.log(`🚀 Localtunnel active at: ${tunnel.url}`);
-    console.log(`🔗 LINE Webhook URL: ${tunnel.url}/api/line/webhook`);
+    console.log(`🔗 LINE Webhook URL: ${tunnelStatus.webhookUrl}`);
+
+    await syncLineWebhookUrl(tunnel.url);
 
     tunnel.on('close', () => {
       console.log('⚠️ Localtunnel closed. Reconnecting in 5 seconds...');
       tunnelStatus.active = false;
-      setTimeout(startLocalTunnel, 5000);
+      setTimeout(startTunnel, 5000);
     });
 
     tunnel.on('error', (err: any) => {
       console.warn('⚠️ Localtunnel error:', err.message || err);
       tunnelStatus.active = false;
       tunnelStatus.lastError = err.message || String(err);
-      setTimeout(startLocalTunnel, 5000);
+      setTimeout(startTunnel, 5000);
     });
   } catch (err: any) {
     console.warn('⚠️ Failed to start localtunnel:', err.message || err);
     tunnelStatus.active = false;
     tunnelStatus.lastError = err.message || String(err);
-    setTimeout(startLocalTunnel, 5000);
+    setTimeout(startTunnel, 5000);
   }
 }
 

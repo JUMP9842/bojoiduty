@@ -18,9 +18,18 @@ import {
   ChevronRight,
   Sun,
   Moon,
+  Bot,
+  Send,
+  HelpCircle,
+  ExternalLink,
+  Copy,
+  AlertCircle,
+  Cloud,
+  ShieldCheck,
 } from 'lucide-react';
 import { AVAILABLE_COLORS, AVAILABLE_ICONS } from '../data/initialData';
 import { getShiftMorningUserId, getShiftEveningUserId } from '../utils/shiftUtils';
+import { getApiUrl } from '../utils/apiUtils';
 
 interface BackendModalProps {
   isOpen: boolean;
@@ -54,7 +63,68 @@ export const BackendModal: React.FC<BackendModalProps> = ({
   const [passwordInput, setPasswordInput] = useState('');
   const [passwordError, setPasswordError] = useState(false);
 
-  const [activeTab, setActiveTab] = useState<'duty_assign' | 'monthly_unlock' | 'bathing' | 'members' | 'fair_auto'>('duty_assign');
+  const [activeTab, setActiveTab] = useState<'duty_assign' | 'monthly_unlock' | 'bathing' | 'members' | 'fair_auto' | 'line_guide'>('duty_assign');
+
+  // Line Guide & Test Push State
+  const [lineGuideSubTab, setLineGuideSubTab] = useState<'webhook' | 'guide' | 'test'>('webhook');
+  const [testLineUserId, setTestLineUserId] = useState('');
+  const [testResult, setTestResult] = useState<{ success: boolean; msg: string } | null>(null);
+  const [isTesting, setIsTesting] = useState(false);
+  const [activeWebhookUrl, setActiveWebhookUrl] = useState('https://pawsduty-duty.loca.lt/api/line/webhook');
+
+  React.useEffect(() => {
+    if (isOpen) {
+      fetch(getApiUrl('/api/line/config'))
+        .then((res) => res.json())
+        .then((data) => {
+          if (data.webhookUrl) setActiveWebhookUrl(data.webhookUrl);
+        })
+        .catch(console.warn);
+    }
+  }, [isOpen]);
+
+  const handleTestPush = async () => {
+    if (!testLineUserId.trim()) {
+      setTestResult({ success: false, msg: 'กรุณากรอก LINE User ID สำหรับทดสอบ (e.g. U123456789...)' });
+      return;
+    }
+
+    setIsTesting(true);
+    setTestResult(null);
+
+    try {
+      const res = await fetch(getApiUrl('/api/line/test-notification'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ testUserId: testLineUserId.trim() }),
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setTestResult({
+          success: true,
+          msg: '🎉 ส่งข้อความทดสอบไปยัง LINE สำเร็จ! โปรดเช็คในแอป LINE ของคุณ',
+        });
+      } else {
+        setTestResult({
+          success: false,
+          msg: '❌ ส่งไม่สำเร็จ: ' + (data.error || 'โปรดตรวจสอบ Channel Access Token หรือให้แน่ใจว่าได้กดติดตามบอทแล้ว'),
+        });
+      }
+    } catch (err: any) {
+      setTestResult({
+        success: false,
+        msg: 'เกิดข้อผิดพลาด: ' + err.message,
+      });
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    alert('คัดลอกเรียบร้อยแล้ว: ' + text);
+  };
 
   // Admin Calendar Navigation State
   const [adminCalDate, setAdminCalDate] = useState<Date>(() => new Date());
@@ -324,6 +394,18 @@ export const BackendModal: React.FC<BackendModalProps> = ({
           >
             <Sparkles className="w-3.5 h-3.5 text-amber-600" />
             <span>Auto Fair Share</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('line_guide')}
+            className={`flex items-center gap-1.5 py-2.5 px-3 border-b-2 text-xs font-bold whitespace-nowrap transition-colors ${
+              activeTab === 'line_guide'
+                ? 'border-[#FFC067] text-neutral-950 bg-[#FFF8EE]'
+                : 'border-transparent text-neutral-500 hover:text-neutral-950'
+            }`}
+          >
+            <Bot className="w-3.5 h-3.5 text-emerald-600" />
+            <span>คู่มือ & LINE OA</span>
           </button>
         </div>
 
@@ -1131,6 +1213,180 @@ export const BackendModal: React.FC<BackendModalProps> = ({
                   </div>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* TAB 6: Line Guide & Webhook Settings */}
+          {activeTab === 'line_guide' && (
+            <div className="space-y-4">
+              <div className="flex border-b border-neutral-200 bg-neutral-50 px-2 pt-1 gap-2 text-xs">
+                <button
+                  onClick={() => setLineGuideSubTab('webhook')}
+                  className={`py-2 px-3 font-bold rounded-t-xl transition-all cursor-pointer flex items-center gap-1.5 border-b-2 ${
+                    lineGuideSubTab === 'webhook'
+                      ? 'bg-white text-neutral-950 border-emerald-500 shadow-xs'
+                      : 'text-neutral-500 hover:text-neutral-900 border-transparent'
+                  }`}
+                >
+                  <Cloud className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Webhook & ตั้งค่า Bot</span>
+                </button>
+                <button
+                  onClick={() => setLineGuideSubTab('guide')}
+                  className={`py-2 px-3 font-bold rounded-t-xl transition-all cursor-pointer flex items-center gap-1.5 border-b-2 ${
+                    lineGuideSubTab === 'guide'
+                      ? 'bg-white text-neutral-950 border-[#06C755] shadow-xs'
+                      : 'text-neutral-500 hover:text-neutral-900 border-transparent'
+                  }`}
+                >
+                  <HelpCircle className="w-3.5 h-3.5 text-amber-600" />
+                  <span>วิธีสร้าง Bot LINE OA</span>
+                </button>
+                <button
+                  onClick={() => setLineGuideSubTab('test')}
+                  className={`py-2 px-3 font-bold rounded-t-xl transition-all cursor-pointer flex items-center gap-1.5 border-b-2 ${
+                    lineGuideSubTab === 'test'
+                      ? 'bg-white text-neutral-950 border-[#06C755] shadow-xs'
+                      : 'text-neutral-500 hover:text-neutral-900 border-transparent'
+                  }`}
+                >
+                  <Send className="w-3.5 h-3.5 text-blue-600" />
+                  <span>ทดสอบแจ้งเตือน (Test Push)</span>
+                </button>
+              </div>
+
+              {lineGuideSubTab === 'webhook' && (
+                <div className="space-y-4 pt-2">
+                  <div className="p-3.5 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-blue-700 text-white space-y-1 shadow-md">
+                    <div className="flex items-center gap-2">
+                      <Cloud className="w-5 h-5 text-emerald-200" />
+                      <h4 className="font-bold text-sm">LINE Webhook Sync & Status (100% Online 24/7)</h4>
+                    </div>
+                    <p className="text-[11px] text-emerald-100 leading-relaxed">
+                      ระบบ Express Backend ทำการซิงก์ Webhook URL ตรงไปยัง LINE Developers Console โดยอัตโนมัติผ่าน Direct Tunnel (พร้อมรับสถานะ 200 OK โดยไม่ติด 302 Redirect)
+                    </p>
+                  </div>
+
+                  <div className="p-4 rounded-xl bg-emerald-50 border-2 border-emerald-500 space-y-3 shadow-xs">
+                    <div className="flex items-center justify-between">
+                      <span className="px-2 py-0.5 bg-emerald-600 text-white font-black text-[10px] rounded-md">
+                        Webhook URL ปัจจุบันที่พร้อมใช้งาน (แนะนำที่สุด ⭐)
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => copyToClipboard(activeWebhookUrl)}
+                        className="px-3 py-1.5 rounded-lg bg-[#06C755] hover:bg-[#00B900] active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-all shadow-xs"
+                      >
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>คัดลอก Webhook URL</span>
+                      </button>
+                    </div>
+
+                    <div className="bg-white p-3 rounded-lg border border-emerald-300 space-y-1">
+                      <p className="text-[10px] text-neutral-500 font-semibold">นำ URL นี้ไปใส่ในช่อง **Webhook URL** ใน LINE Developers Console:</p>
+                      <p className="font-mono text-xs text-emerald-950 font-bold select-all break-all bg-emerald-50/90 p-2.5 rounded-md border border-emerald-300">
+                        {activeWebhookUrl}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 text-[11px] text-emerald-900 font-medium bg-white/80 p-2 rounded-lg border border-emerald-200">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      <span>เมื่อกดปุ่ม <strong>Verify</strong> ใน LINE Developers Console จะขึ้น <strong>Success (HTTP status 200)</strong> ทันที!</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {lineGuideSubTab === 'guide' && (
+                <div className="space-y-4 pt-2 text-neutral-800">
+                  <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 space-y-1">
+                    <h4 className="font-bold flex items-center gap-1.5 text-xs">
+                      <HelpCircle className="w-4 h-4 text-amber-600" />
+                      <span>ขั้นตอนการสร้าง บอท และนำ Tokens มาใส่ในระบบ</span>
+                    </h4>
+                    <p className="text-[11px] text-amber-800">
+                      ทำตามขั้นตอนง่ายๆ บน LINE Developers Console:
+                    </p>
+                  </div>
+                  <div className="space-y-3">
+                    <div className="p-3.5 rounded-xl bg-white border border-neutral-200 shadow-xs space-y-2">
+                      <div className="flex items-center gap-2 font-bold text-neutral-900 text-xs">
+                        <span className="w-5 h-5 rounded-full bg-[#06C755] text-white flex items-center justify-center text-[11px]">1</span>
+                        <span>ไปที่ LINE Developers Console</span>
+                        <a href="https://developers.line.biz/console/" target="_blank" rel="noopener noreferrer" className="ml-auto text-[#06C755] hover:underline flex items-center gap-1 text-[11px]">
+                          <span>เปิดเว็บ LINE Developers</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </div>
+                    </div>
+                    <div className="p-3.5 rounded-xl bg-white border border-neutral-200 shadow-xs space-y-2">
+                      <div className="flex items-center gap-2 font-bold text-neutral-900 text-xs">
+                        <span className="w-5 h-5 rounded-full bg-[#06C755] text-white flex items-center justify-center text-[11px]">2</span>
+                        <span>สร้าง LINE Login & Messaging API Channels</span>
+                      </div>
+                      <p className="text-[11px] text-neutral-600 pl-7 leading-relaxed">
+                        ตั้งค่า Channel Access Token (long-lived) และเปิดใช้งาน Webhook ให้เรียบร้อย
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {lineGuideSubTab === 'test' && (
+                <div className="space-y-4 pt-2">
+                  <div className="p-3 rounded-xl bg-blue-50 border border-blue-200 text-blue-900 space-y-1">
+                    <h4 className="font-bold flex items-center gap-1.5 text-xs">
+                      <Send className="w-4 h-4 text-blue-600" />
+                      <span>ทดสอบส่งการแจ้งเตือนเข้าแอป LINE</span>
+                    </h4>
+                    <p className="text-[11px] text-blue-800">
+                      กรอก LINE User ID (เริ่มต้นด้วยตัว U...) เพื่อทดสอบการส่ง Push Notification
+                    </p>
+                  </div>
+
+                  {testResult && (
+                    <div
+                      className={`p-3 rounded-xl font-bold flex items-center gap-2 ${
+                        testResult.success
+                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                          : 'bg-red-50 text-red-700 border border-red-200'
+                      }`}
+                    >
+                      {testResult.success ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      ) : (
+                        <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
+                      )}
+                      <span>{testResult.msg}</span>
+                    </div>
+                  )}
+
+                  <div className="p-4 rounded-xl bg-white border border-neutral-200 shadow-xs space-y-3">
+                    <div>
+                      <label className="block text-xs font-bold text-neutral-800 mb-1">
+                        LINE User ID ของผู้รับ (เช่น U123456789abcdef...)
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="วาง LINE User ID ที่นี่..."
+                        value={testLineUserId}
+                        onChange={(e) => setTestLineUserId(e.target.value)}
+                        className="w-full px-3 py-2.5 rounded-xl bg-neutral-50 border border-neutral-200 text-xs font-mono focus:bg-white focus:border-[#06C755] focus:outline-hidden"
+                      />
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleTestPush}
+                      disabled={isTesting}
+                      className="w-full py-2.5 rounded-xl bg-[#06C755] hover:bg-[#00B900] text-white font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md disabled:opacity-50"
+                    >
+                      {isTesting ? <Bot className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                      <span>{isTesting ? 'กำลังส่งข้อความทดสอบ...' : 'ส่งข้อความทดสอบเข้า LINE'}</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

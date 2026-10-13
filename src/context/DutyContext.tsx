@@ -33,6 +33,7 @@ import {
   getDoc,
 } from 'firebase/firestore';
 import { getShiftMorningUserId, getShiftEveningUserId } from '../utils/shiftUtils';
+import { getApiUrl } from '../utils/apiUtils';
 
 export function cleanFirestoreData<T extends Record<string, any>>(obj: T): Record<string, any> {
   const clean: Record<string, any> = {};
@@ -322,7 +323,7 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const sendLinePushNotification = async (targetUserId: string, messageText: string): Promise<boolean> => {
     if (!targetUserId) return false;
     try {
-      const res = await fetch('/api/line/push-notification', {
+      const res = await fetch(getApiUrl('/api/line/push-notification'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ targetUserId, messageText }),
