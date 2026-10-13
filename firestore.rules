@@ -1,0 +1,62 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helpers
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128;
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      allow read: if true;
+      allow create, update, delete: if isValidId(userId);
+    }
+
+    // Shifts Collection
+    match /shifts/{shiftId} {
+      allow read: if true;
+      allow create, update, delete: if isValidId(shiftId);
+    }
+
+    // Calendar Tasks & Notes
+    match /calendar_tasks/{taskId} {
+      allow read: if true;
+      allow create, update, delete: if isValidId(taskId);
+    }
+
+    // Bathing Schedules
+    match /bathing_schedules/{scheduleId} {
+      allow read: if true;
+      allow create, update, delete: if isValidId(scheduleId);
+    }
+
+    // Swap Requests
+    match /swap_requests/{requestId} {
+      allow read: if true;
+      allow create, update, delete: if isValidId(requestId);
+    }
+
+    // Announcements
+    match /announcements/{announcementId} {
+      allow read: if true;
+      allow create, update, delete: if isValidId(announcementId);
+    }
+
+    // Activity Logs
+    match /activity_logs/{logId} {
+      allow read: if true;
+      allow create, update, delete: if isValidId(logId);
+    }
+
+    // Settings (Dog Profile & Booking Settings)
+    match /settings/{settingId} {
+      allow read: if true;
+      allow create, update, delete: if isValidId(settingId);
+    }
+  }
+}

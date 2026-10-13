@@ -1,0 +1,6 @@
+{
+  "name": "PawsDuty - ระบบจองเวรเลี้ยงน้องหมา",
+  "description": "เว็บจัดการและจองเวรเลี้ยงน้องหมาแบบมินิมอล หารเวรเท่ากัน สลับเวร แจ้งประกาศ และพิมพ์ตารางปฏิทิน",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

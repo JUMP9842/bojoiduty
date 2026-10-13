@@ -1,0 +1,1181 @@
+import React, { useState, useMemo } from 'react';
+import { useDuty } from '../context/DutyContext';
+import {
+  Settings,
+  X,
+  Bath,
+  Users,
+  Sparkles,
+  Plus,
+  Trash2,
+  CalendarCheck,
+  RotateCcw,
+  CheckCircle2,
+  Lock,
+  Clock,
+  KeyRound,
+  ChevronLeft,
+  ChevronRight,
+  Sun,
+  Moon,
+} from 'lucide-react';
+import { AVAILABLE_COLORS, AVAILABLE_ICONS } from '../data/initialData';
+import { getShiftMorningUserId, getShiftEveningUserId } from '../utils/shiftUtils';
+
+interface BackendModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+export const BackendModal: React.FC<BackendModalProps> = ({
+  isOpen,
+  onClose,
+}) => {
+  const {
+    bathingSchedules,
+    toggleBathingDate,
+    users,
+    addUser,
+    deleteUser,
+    shifts,
+    adminAssignShift,
+    adminClearShiftPart,
+    autoDistributeShifts,
+    resetToDefaultData,
+    wipeAllData,
+    bookingSettings,
+    setMonthUnlockSchedule,
+    deleteMonthUnlockSchedule,
+    isFirebaseSynced,
+  } = useDuty();
+
+  // Password Protection for Backend (Password = "admin")
+  const [isAdminAuthenticated, setIsAdminAuthenticated] = useState(false);
+  const [passwordInput, setPasswordInput] = useState('');
+  const [passwordError, setPasswordError] = useState(false);
+
+  const [activeTab, setActiveTab] = useState<'duty_assign' | 'monthly_unlock' | 'bathing' | 'members' | 'fair_auto'>('duty_assign');
+
+  // Admin Calendar Navigation State
+  const [adminCalDate, setAdminCalDate] = useState<Date>(() => new Date());
+  const adminYear = adminCalDate.getFullYear();
+  const adminMonth = adminCalDate.getMonth();
+
+  const prevAdminMonth = () => setAdminCalDate(new Date(adminYear, adminMonth - 1, 1));
+  const nextAdminMonth = () => setAdminCalDate(new Date(adminYear, adminMonth + 1, 1));
+  const goToTodayAdmin = () => setAdminCalDate(new Date());
+
+  const adminMonthTitle = useMemo(() => {
+    return adminCalDate.toLocaleDateString('th-TH', { month: 'long', year: 'numeric' });
+  }, [adminCalDate]);
+
+  const daysInMonth = new Date(adminYear, adminMonth + 1, 0).getDate();
+  const firstDayOfWeek = new Date(adminYear, adminMonth, 1).getDay(); // 0 = Sun
+
+  const daysArray = useMemo(() => {
+    const days: (number | null)[] = [];
+    for (let i = 0; i < firstDayOfWeek; i++) {
+      days.push(null);
+    }
+    for (let i = 1; i <= daysInMonth; i++) {
+      days.push(i);
+    }
+    return days;
+  }, [firstDayOfWeek, daysInMonth]);
+
+  const formatAdminDateStr = (d: number) => {
+    return `${adminYear}-${String(adminMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  };
+
+  // Popover State for Assigning / Switching / Swapping User on a specific date & slot
+  const [activeSlotTarget, setActiveSlotTarget] = useState<{
+    date: string;
+    type: 'daily' | 'bathing';
+    part: 'morning' | 'evening' | 'full_day' | 'bathing';
+    currentUserId?: string;
+  } | null>(null);
+
+  // Monthly Unlock Schedule Form
+  const [scheduleTargetMonth, setScheduleTargetMonth] = useState(() => {
+    const now = new Date();
+    const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+    return `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [scheduleOpenDate, setScheduleOpenDate] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  });
+  const [scheduleOpenTime, setScheduleOpenTime] = useState('12:00');
+  const [scheduleNotes, setScheduleNotes] = useState('');
+  const [scheduleSuccess, setScheduleSuccess] = useState<string | null>(null);
+
+  // Member form
+  const [newUsername, setNewUsername] = useState('');
+  const [newPassword, setNewPassword] = useState('123');
+  const [newMemberColor, setNewMemberColor] = useState(AVAILABLE_COLORS[0]);
+  const [newMemberIcon, setNewMemberIcon] = useState(AVAILABLE_ICONS[0]);
+
+  // Auto assign month
+  const [autoYear, setAutoYear] = useState(new Date().getFullYear());
+  const [autoMonth, setAutoMonth] = useState(new Date().getMonth());
+  const [autoSuccessMessage, setAutoSuccessMessage] = useState<string | null>(null);
+
+  if (!isOpen) return null;
+
+  // Password verification
+  const handlePasswordSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (passwordInput.trim() === 'admin') {
+      setIsAdminAuthenticated(true);
+      setPasswordError(false);
+      setPasswordInput('');
+    } else {
+      setPasswordError(true);
+    }
+  };
+
+  const handleSaveMonthSchedule = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!scheduleTargetMonth || !scheduleOpenDate || !scheduleOpenTime) return;
+
+    setMonthUnlockSchedule(scheduleTargetMonth, scheduleOpenDate, scheduleOpenTime, scheduleNotes.trim() || undefined);
+    setScheduleSuccess(`บันทึกเวลาเปิดจองเดือน ${scheduleTargetMonth} เรียบร้อยแล้ว!`);
+    setTimeout(() => setScheduleSuccess(null), 3500);
+    setScheduleNotes('');
+  };
+
+  const handleAddMember = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newUsername.trim()) return;
+    addUser(
+      newUsername.trim(),
+      newUsername.trim(),
+      newMemberColor,
+      newUsername.trim(),
+      newPassword.trim(),
+      newMemberIcon
+    );
+    setNewUsername('');
+    setNewPassword('123');
+  };
+
+  const handleRunAutoDistribute = () => {
+    if (users.length === 0) {
+      alert('ยังไม่มีสมาชิกในระบบ กรุณาเพิ่มสมาชิกหรือให้สมาชิกเข้าสู่ระบบด้วย LINE ก่อน');
+      return;
+    }
+    if (
+      window.confirm(
+        `ต้องการจัดสรรเวรประจำวันทั้งเดือน ${autoMonth + 1}/${autoYear} ให้สมาชิกทั้ง ${users.length} คน เท่ากันโดยอัตโนมัติหรือไม่?`
+      )
+    ) {
+      autoDistributeShifts(autoYear, autoMonth);
+      setAutoSuccessMessage(`จัดสรรเวรเดือน ${autoMonth + 1}/${autoYear} เรียบร้อยแล้ว!`);
+      setTimeout(() => setAutoSuccessMessage(null), 3000);
+    }
+  };
+
+  const getUserById = (id?: string) => users.find((u) => u.id === id);
+
+  // If not authenticated, render password lock screen
+  if (!isAdminAuthenticated) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-neutral-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+        <div className="relative w-full max-w-sm rounded-2xl bg-white border border-[#FFC067] shadow-2xl p-6 overflow-hidden text-center">
+          <button
+            onClick={onClose}
+            className="absolute top-4 right-4 p-1.5 rounded-lg text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+
+          <div className="w-12 h-12 rounded-2xl bg-[#FFC067] text-neutral-950 flex items-center justify-center mx-auto mb-3 shadow-md border border-[#F5B153]">
+            <KeyRound className="w-6 h-6" />
+          </div>
+
+          <h3 className="text-base font-bold text-neutral-900 mb-1">
+            Admin Center
+          </h3>
+          <p className="text-xs text-neutral-500 mb-4">
+            กรุณากรอกรหัสผ่านเพื่อเข้าสู่ระบบจัดการหลังบ้าน
+          </p>
+
+          {passwordError && (
+            <div className="mb-3 p-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs animate-in fade-in font-medium">
+              รหัสผ่านไม่ถูกต้อง กรุณาลองใหม่อีกครั้ง
+            </div>
+          )}
+
+          <form onSubmit={handlePasswordSubmit} className="space-y-3">
+            <div className="relative">
+              <Lock className="w-4 h-4 text-neutral-400 absolute left-3 top-2.5" />
+              <input
+                type="password"
+                required
+                autoFocus
+                placeholder="กรอกรหัสผ่าน (admin)..."
+                value={passwordInput}
+                onChange={(e) => {
+                  setPasswordInput(e.target.value);
+                  setPasswordError(false);
+                }}
+                className="w-full pl-9 pr-3 py-2 text-xs rounded-xl bg-neutral-50 border border-neutral-200 focus:bg-white focus:border-[#FFC067] focus:outline-hidden"
+              />
+            </div>
+
+            <button
+              type="submit"
+              className="w-full py-2.5 rounded-xl bg-[#FFF8EE] hover:bg-[#FFC067]/40 active:bg-[#FFC067] text-neutral-950 text-xs font-bold shadow-xs transition-all flex items-center justify-center gap-1.5 border border-[#FFC067]/70 cursor-pointer"
+            >
+              <span>เข้าสู่ระบบ Backend</span>
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-neutral-900/60 backdrop-blur-xs animate-in fade-in duration-200">
+      <div className="relative w-full max-w-5xl max-h-[94vh] flex flex-col rounded-2xl bg-white border border-[#FFC067] shadow-2xl overflow-hidden">
+        {/* Header */}
+        <div className="px-5 sm:px-6 py-3 border-b border-[#FFC067]/40 flex items-center justify-between bg-[#FFF8EE]/60">
+          <div className="flex items-center gap-2.5">
+            <div className="w-7 h-7 rounded-xl bg-[#FFF8EE] text-neutral-950 flex items-center justify-center shadow-xs border border-[#FFC067]/70">
+              <Settings className="w-4 h-4" />
+            </div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-bold text-neutral-900">
+                Admin Center
+              </h3>
+              {isFirebaseSynced && (
+                <span className="text-[10px] px-1.5 py-0.2 rounded-md bg-emerald-100 text-emerald-800 font-semibold border border-emerald-200">
+                  Firebase Cloud Synced
+                </span>
+              )}
+            </div>
+          </div>
+
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-lg text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Tab Navigation */}
+        <div className="flex border-b border-[#FFC067]/60 px-5 sm:px-6 bg-white overflow-x-auto gap-1.5">
+          <button
+            onClick={() => setActiveTab('duty_assign')}
+            className={`flex items-center gap-1.5 py-2.5 px-3 border-b-2 text-xs font-bold whitespace-nowrap transition-colors ${
+              activeTab === 'duty_assign'
+                ? 'border-[#FFC067] text-neutral-950 bg-[#FFF8EE]'
+                : 'border-transparent text-neutral-500 hover:text-neutral-950'
+            }`}
+          >
+            <CalendarCheck className="w-3.5 h-3.5 text-neutral-900" />
+            <span>จัดการเวรผู้ใช้ (Calendar View)</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('monthly_unlock')}
+            className={`flex items-center gap-1.5 py-2.5 px-3 border-b-2 text-xs font-bold whitespace-nowrap transition-colors ${
+              activeTab === 'monthly_unlock'
+                ? 'border-[#FFC067] text-neutral-950 bg-[#FFF8EE]'
+                : 'border-transparent text-neutral-500 hover:text-neutral-950'
+            }`}
+          >
+            <Clock className="w-3.5 h-3.5 text-neutral-900" />
+            <span>ตั้งเวลาเปิดจองแต่ละเดือน</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('bathing')}
+            className={`flex items-center gap-1.5 py-2.5 px-3 border-b-2 text-xs font-bold whitespace-nowrap transition-colors ${
+              activeTab === 'bathing'
+                ? 'border-[#FFC067] text-neutral-950 bg-[#FFF8EE]'
+                : 'border-transparent text-neutral-500 hover:text-neutral-950'
+            }`}
+          >
+            <Bath className="w-3.5 h-3.5 text-sky-600" />
+            <span>เวรอาบน้ำ ({bathingSchedules.filter((b) => b.enabled).length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('members')}
+            className={`flex items-center gap-1.5 py-2.5 px-3 border-b-2 text-xs font-bold whitespace-nowrap transition-colors ${
+              activeTab === 'members'
+                ? 'border-[#FFC067] text-neutral-950 bg-[#FFF8EE]'
+                : 'border-transparent text-neutral-500 hover:text-neutral-950'
+            }`}
+          >
+            <Users className="w-3.5 h-3.5 text-emerald-600" />
+            <span>จัดการบัญชีผู้ใช้ ({users.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('fair_auto')}
+            className={`flex items-center gap-1.5 py-2.5 px-3 border-b-2 text-xs font-bold whitespace-nowrap transition-colors ${
+              activeTab === 'fair_auto'
+                ? 'border-[#FFC067] text-neutral-950 bg-[#FFF8EE]'
+                : 'border-transparent text-neutral-500 hover:text-neutral-950'
+            }`}
+          >
+            <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+            <span>Auto Fair Share</span>
+          </button>
+        </div>
+
+        {/* Tab Content Body */}
+        <div className="p-4 sm:p-5 overflow-y-auto flex-1 text-xs">
+          {/* TAB 1: Admin Interactive Calendar View */}
+          {activeTab === 'duty_assign' && (
+            <div className="space-y-3">
+              {/* Calendar Toolbar & Navigation */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 p-3 rounded-xl bg-[#FFF8EE]/60 border border-[#FFC067]/70">
+                <div className="flex items-center gap-2.5">
+                  <h4 className="text-sm font-bold text-neutral-900">
+                    {adminMonthTitle} ({adminCalDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })})
+                  </h4>
+                  <button
+                    onClick={goToTodayAdmin}
+                    className="px-2 py-0.5 text-[11px] font-bold rounded-md bg-white border border-[#FFC067]/70 text-neutral-950 hover:bg-[#FFC067]/30"
+                  >
+                    Today
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <div className="text-[11px] text-neutral-500 hidden md:block">
+                    💡 คลิกที่ชื่อผู้ใช้เพื่อเปลี่ยน/สลับคน &bull; กด 🗑️ เพื่อลบเฉพาะเวรนั้นๆ &bull; กด +🛁 เพิ่มเวรอาบน้ำ
+                  </div>
+
+                  <div className="flex items-center rounded-lg bg-white border border-[#FFC067]/70 p-0.5">
+                    <button
+                      onClick={prevAdminMonth}
+                      title="Previous Month"
+                      className="p-1 rounded text-neutral-600 hover:text-black hover:bg-[#FFF8EE]"
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={nextAdminMonth}
+                      title="Next Month"
+                      className="p-1 rounded text-neutral-600 hover:text-black hover:bg-[#FFF8EE]"
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Admin Calendar Grid */}
+              <div className="rounded-xl border border-neutral-200 overflow-hidden bg-white shadow-xs">
+                {/* Weekday headers */}
+                <div className="grid grid-cols-7 border-b border-neutral-200 bg-neutral-50 text-center py-2 text-xs font-bold text-neutral-700">
+                  <span className="text-red-600">Sun</span>
+                  <span>Mon</span>
+                  <span>Tue</span>
+                  <span>Wed</span>
+                  <span>Thu</span>
+                  <span>Fri</span>
+                  <span className="text-blue-600">Sat</span>
+                </div>
+
+                {/* Days Grid */}
+                <div className="grid grid-cols-7 border-collapse">
+                  {daysArray.map((dayNum, index) => {
+                    if (dayNum === null) {
+                      return (
+                        <div
+                          key={`empty-admin-${index}`}
+                          className="min-h-[105px] p-1.5 bg-neutral-50/40 border-b border-r border-neutral-100"
+                        />
+                      );
+                    }
+
+                    const dateStr = formatAdminDateStr(dayNum);
+                    const daily = shifts.find((s) => s.date === dateStr && s.type === 'daily');
+                    const bathing = shifts.find((s) => s.date === dateStr && s.type === 'bathing');
+                    const hasBathingSchedule = bathingSchedules.some((b) => b.date === dateStr && b.enabled);
+                    const isToday = new Date().toISOString().slice(0, 10) === dateStr;
+
+                    const morningUserId = getShiftMorningUserId(daily);
+                    const eveningUserId = getShiftEveningUserId(daily);
+                    const morningUser = morningUserId ? getUserById(morningUserId) : undefined;
+                    const eveningUser = eveningUserId ? getUserById(eveningUserId) : undefined;
+                    const bathingUser = getUserById(bathing?.userId);
+
+                    return (
+                      <div
+                        key={`admin-day-${dayNum}`}
+                        className={`min-h-[105px] p-1.5 border-b border-r border-neutral-100 flex flex-col justify-between transition-colors ${
+                          isToday ? 'bg-[#FFF8EE]/60 ring-1 ring-inset ring-[#FFC067]' : 'bg-white'
+                        }`}
+                      >
+                        {/* Day Header */}
+                        <div className="flex items-center justify-between mb-1">
+                          <span
+                            className={`text-xs font-bold inline-flex items-center justify-center w-5 h-5 rounded-full ${
+                              isToday ? 'bg-[#FFC067] text-neutral-950 font-bold border border-[#F5B153]' : 'text-neutral-700'
+                            }`}
+                          >
+                            {dayNum}
+                          </span>
+
+                          <div className="flex items-center gap-1">
+                            {/* If daily shift has any assigned slots, show a clear all daily button */}
+                            {daily && (morningUser || eveningUser) && (
+                              <button
+                                type="button"
+                                onClick={() => adminClearShiftPart(dateStr, 'daily', 'full_day')}
+                                className="text-[10px] p-0.5 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
+                                title="ลบเวรประจำวันทั้งหมดของวันนี้ (เช้า + เย็น)"
+                              >
+                                <Trash2 className="w-2.5 h-2.5" />
+                              </button>
+                            )}
+
+                            {/* Toggle Bathing Schedule icon button */}
+                            <button
+                              type="button"
+                              onClick={() => toggleBathingDate(dateStr)}
+                              className={`text-[10px] px-1 py-0.5 rounded font-bold transition-all ${
+                                hasBathingSchedule
+                                  ? 'bg-sky-100 text-sky-800 border border-sky-300'
+                                  : 'text-neutral-400 hover:text-sky-600 hover:bg-sky-50'
+                              }`}
+                              title={hasBathingSchedule ? 'มีเวรอาบน้ำ (คลิกเพื่อปิด)' : 'คลิกเพื่อเพิ่มเวรอาบน้ำวันนี้'}
+                            >
+                              🛁
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Slots (Morning, Evening, Bathing) */}
+                        <div className="space-y-1">
+                          {/* 1. Morning Slot (☀️ เช้า) */}
+                          <div className="flex items-center justify-between gap-1 text-[10px] p-1 rounded-md bg-amber-50/70 border border-amber-200 text-neutral-800">
+                            <div
+                              onClick={() =>
+                                setActiveSlotTarget({
+                                  date: dateStr,
+                                  type: 'daily',
+                                  part: 'morning',
+                                  currentUserId: morningUser?.id,
+                                })
+                              }
+                              className="flex items-center gap-1 truncate cursor-pointer hover:opacity-80 flex-1"
+                              title="คลิกเพื่อเลือก/เปลี่ยนผู้รับเวรเช้า"
+                            >
+                              <Sun className="w-2.5 h-2.5 text-amber-600 shrink-0" />
+                              <span className="font-bold text-[9px] text-neutral-500 shrink-0">เช้า:</span>
+                              {morningUser ? (
+                                <>
+                                  <span>{morningUser.icon}</span>
+                                  <span className="truncate font-medium">
+                                    {morningUser.username || morningUser.name}
+                                  </span>
+                                </>
+                              ) : (
+                                <span className="text-amber-700 font-medium">+ ว่าง</span>
+                              )}
+                            </div>
+
+                            {morningUser && (
+                              <button
+                                type="button"
+                                onClick={() => adminClearShiftPart(dateStr, 'daily', 'morning')}
+                                className="text-neutral-400 hover:text-red-600 p-0.5 rounded hover:bg-red-50"
+                                title="ลบเฉพาะเวรเช้า"
+                              >
+                                <Trash2 className="w-2.5 h-2.5" />
+                              </button>
+                            )}
+                          </div>
+
+                          {/* 2. Evening Slot (🌙 เย็น) */}
+                          <div className="flex items-center justify-between gap-1 text-[10px] p-1 rounded-md bg-indigo-50/70 border border-indigo-200 text-neutral-800">
+                            <div
+                              onClick={() =>
+                                setActiveSlotTarget({
+                                  date: dateStr,
+                                  type: 'daily',
+                                  part: 'evening',
+                                  currentUserId: eveningUser?.id,
+                                })
+                              }
+                              className="flex items-center gap-1 truncate cursor-pointer hover:opacity-80 flex-1"
+                              title="คลิกเพื่อเลือก/เปลี่ยนผู้รับเวรเย็น"
+                            >
+                              <Moon className="w-2.5 h-2.5 text-indigo-500 shrink-0" />
+                              <span className="font-bold text-[9px] text-neutral-500 shrink-0">เย็น:</span>
+                              {eveningUser ? (
+                                <>
+                                  <span>{eveningUser.icon}</span>
+                                  <span className="truncate font-medium">
+                                    {eveningUser.username || eveningUser.name}
+                                  </span>
+                                </>
+                              ) : (
+                                <span className="text-indigo-600 font-medium">+ ว่าง</span>
+                              )}
+                            </div>
+
+                            {eveningUser && (
+                              <button
+                                type="button"
+                                onClick={() => adminClearShiftPart(dateStr, 'daily', 'evening')}
+                                className="text-neutral-400 hover:text-red-600 p-0.5 rounded hover:bg-red-50"
+                                title="ลบเฉพาะเวรเย็น"
+                              >
+                                <Trash2 className="w-2.5 h-2.5" />
+                              </button>
+                            )}
+                          </div>
+
+                          {/* 3. Bathing Slot (🛁 อาบน้ำ) if enabled */}
+                          {hasBathingSchedule && (
+                            <div className="flex items-center justify-between gap-1 text-[10px] p-1 rounded-md bg-sky-50 border border-sky-200 text-sky-950">
+                              <div
+                                onClick={() =>
+                                  setActiveSlotTarget({
+                                    date: dateStr,
+                                    type: 'bathing',
+                                    part: 'bathing',
+                                    currentUserId: bathingUser?.id,
+                                  })
+                                }
+                                className="flex items-center gap-1 truncate cursor-pointer hover:opacity-80 flex-1"
+                                title="คลิกเพื่อเลือก/เปลี่ยนผู้รับเวรอาบน้ำ"
+                              >
+                                <Bath className="w-2.5 h-2.5 text-sky-600 shrink-0" />
+                                {bathingUser ? (
+                                  <>
+                                    <span>{bathingUser.icon}</span>
+                                    <span className="truncate font-bold">
+                                      {bathingUser.username || bathingUser.name}
+                                    </span>
+                                  </>
+                                ) : (
+                                  <span className="text-sky-600 font-medium">+ ผู้รับผิดชอบ</span>
+                                )}
+                              </div>
+
+                              {bathingUser && (
+                                <button
+                                  type="button"
+                                  onClick={() => adminClearShiftPart(dateStr, 'bathing', 'bathing')}
+                                  className="text-neutral-400 hover:text-red-600 p-0.5 rounded hover:bg-red-50"
+                                  title="ลบผู้รับเวรอาบน้ำ"
+                                >
+                                  <Trash2 className="w-2.5 h-2.5" />
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Popover / Modal: Quick Assign / Switch Member to Slot */}
+              {activeSlotTarget && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-neutral-900/50 backdrop-blur-xs animate-in fade-in duration-150">
+                  <div className="relative w-full max-w-sm rounded-2xl bg-white border border-[#FFC067] shadow-2xl p-4 sm:p-5 overflow-hidden">
+                    <button
+                      onClick={() => setActiveSlotTarget(null)}
+                      className="absolute top-3.5 right-3.5 p-1 rounded-lg text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-base">
+                        {activeSlotTarget.part === 'morning'
+                          ? '☀️'
+                          : activeSlotTarget.part === 'evening'
+                          ? '🌙'
+                          : '🛁'}
+                      </span>
+                      <div>
+                        <h4 className="text-xs font-bold text-neutral-900">
+                          เลือกผู้รับผิดชอบเวร{' '}
+                          {activeSlotTarget.part === 'morning'
+                            ? 'เช้า'
+                            : activeSlotTarget.part === 'evening'
+                            ? 'เย็น'
+                            : 'อาบน้ำ'}
+                        </h4>
+                        <span className="text-[11px] text-neutral-500">
+                          วันที่ {activeSlotTarget.date}
+                        </span>
+                      </div>
+                    </div>
+
+                    <span className="text-[11px] font-bold text-neutral-700 block mb-2">
+                      คลิกเลือกสมาชิกเพื่อมอบหมาย / สลับคน:
+                    </span>
+
+                    <div className="space-y-1.5 max-h-60 overflow-y-auto mb-3">
+                      {users.map((u) => {
+                        const isCurrentSelected = u.id === activeSlotTarget.currentUserId;
+
+                        return (
+                          <button
+                            key={u.id}
+                            type="button"
+                            onClick={() => {
+                              adminAssignShift(
+                                u.id,
+                                activeSlotTarget.date,
+                                activeSlotTarget.type,
+                                activeSlotTarget.part === 'bathing' ? 'full_day' : activeSlotTarget.part
+                              );
+                              setActiveSlotTarget(null);
+                            }}
+                            className={`w-full flex items-center justify-between p-2.5 rounded-xl border text-xs transition-all ${
+                              isCurrentSelected
+                                ? 'bg-[#FFC067] text-neutral-950 border-[#F5B153] font-bold shadow-xs'
+                                : 'bg-neutral-50 hover:bg-[#FFF8EE] text-neutral-800 border-neutral-200'
+                            }`}
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="text-base">{u.icon || '🐶'}</span>
+                              <span
+                                className="w-2.5 h-2.5 rounded-full"
+                                style={{ backgroundColor: u.color }}
+                              />
+                              <span>{u.username || u.name}</span>
+                            </div>
+
+                            {isCurrentSelected && (
+                              <span className="text-[10px] px-2 py-0.5 rounded-md bg-white/60 text-neutral-950 font-bold">
+                                ผู้รับผิดชอบปัจจุบัน
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Clear Slot Buttons */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-neutral-100">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            adminClearShiftPart(
+                              activeSlotTarget.date,
+                              activeSlotTarget.type,
+                              activeSlotTarget.part
+                            );
+                            setActiveSlotTarget(null);
+                          }}
+                          className="flex items-center gap-1 text-xs text-red-600 hover:bg-red-50 px-2.5 py-1.5 rounded-lg border border-red-200 font-semibold cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>ลบเฉพาะเวรนี้ (+ ว่าง)</span>
+                        </button>
+
+                        {activeSlotTarget.type === 'daily' && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              adminClearShiftPart(
+                                activeSlotTarget.date,
+                                'daily',
+                                'full_day'
+                              );
+                              setActiveSlotTarget(null);
+                            }}
+                            className="flex items-center gap-1 text-xs text-red-700 hover:bg-red-50 px-2.5 py-1.5 rounded-lg border border-red-300 font-bold cursor-pointer"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>ลบทั้งวัน (เช้า+เย็น)</span>
+                          </button>
+                        )}
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setActiveSlotTarget(null)}
+                        className="px-3 py-1.5 rounded-lg text-xs text-neutral-600 hover:bg-neutral-100 cursor-pointer"
+                      >
+                        ปิด
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 2: Custom Monthly Unlock Schedule */}
+          {activeTab === 'monthly_unlock' && (
+            <div className="space-y-4">
+              <form
+                onSubmit={handleSaveMonthSchedule}
+                className="p-4 rounded-xl bg-[#FFF8EE]/60 border border-[#FFC067]/70 shadow-xs space-y-3"
+              >
+                <div className="flex items-center gap-2 font-bold text-neutral-900 text-xs">
+                  <Clock className="w-4 h-4 text-neutral-950" />
+                  <span>กำหนดวันและเวลาเปิดให้จองเวรล่วงหน้าในแต่ละเดือน</span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[11px] text-neutral-600 mb-1 font-medium">
+                      เลือกเดือนที่ต้องการเปิดจอง *
+                    </label>
+                    <input
+                      type="month"
+                      required
+                      value={scheduleTargetMonth}
+                      onChange={(e) => setScheduleTargetMonth(e.target.value)}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-white border border-neutral-200 text-xs font-semibold focus:outline-hidden focus:border-[#FFC067]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] text-neutral-600 mb-1 font-medium">
+                      วันที่เปิดให้เริ่มจอง *
+                    </label>
+                    <input
+                      type="date"
+                      required
+                      value={scheduleOpenDate}
+                      onChange={(e) => setScheduleOpenDate(e.target.value)}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-white border border-neutral-200 text-xs font-semibold focus:outline-hidden focus:border-[#FFC067]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] text-neutral-600 mb-1 font-medium">
+                      เวลาเปิดให้เริ่มจอง (HH:mm) *
+                    </label>
+                    <input
+                      type="time"
+                      required
+                      value={scheduleOpenTime}
+                      onChange={(e) => setScheduleOpenTime(e.target.value)}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-white border border-neutral-200 text-xs font-semibold focus:outline-hidden focus:border-[#FFC067]"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-3 pt-1">
+                  <input
+                    type="text"
+                    placeholder="บันทึกข้อความหรือเหตุผล (เช่น ทุกคนว่างพร้อมกันตอนเที่ยง)..."
+                    value={scheduleNotes}
+                    onChange={(e) => setScheduleNotes(e.target.value)}
+                    className="px-3 py-1.5 rounded-lg bg-white border border-neutral-200 text-xs w-2/3 focus:outline-hidden focus:border-[#FFC067]"
+                  />
+
+                  <button
+                    type="submit"
+                    className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#FFF8EE] hover:bg-[#FFC067]/40 active:bg-[#FFC067] text-neutral-950 font-bold shadow-xs border border-[#FFC067]/70 cursor-pointer"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5 text-neutral-950" />
+                    <span>บันทึกเวลาเปิดจอง</span>
+                  </button>
+                </div>
+
+                {scheduleSuccess && (
+                  <div className="p-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-center font-medium animate-in fade-in">
+                    {scheduleSuccess}
+                  </div>
+                )}
+              </form>
+
+              {/* Monthly unlock schedules list */}
+              <div>
+                <span className="text-[11px] font-bold text-neutral-900 uppercase tracking-wider block mb-2">
+                  รายการกำหนดการเปิดจองรายเดือน:
+                </span>
+
+                <div className="space-y-2">
+                  {Object.values(bookingSettings.monthSchedules || {}).length === 0 ? (
+                    <div className="p-4 rounded-xl border border-dashed border-neutral-200 text-neutral-400 text-center">
+                      ยังไม่มีการกำหนดเวลาเปิดจองเฉพาะเดือน (ใช้ค่าเริ่มต้น: วันที่ {bookingSettings.bookingOpenDay} ของเดือนก่อนหน้า)
+                    </div>
+                  ) : (
+                    Object.values(bookingSettings.monthSchedules || {}).map((item) => {
+                      const unlockDateTime = new Date(`${item.openDate}T${item.openTime || '00:00'}:00`).getTime();
+                      const isUnlockedNow = Date.now() >= unlockDateTime;
+
+                      return (
+                        <div
+                          key={item.monthKey}
+                          className="flex items-center justify-between p-3 rounded-xl bg-white border border-[#FFC067]/70 shadow-xs"
+                        >
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-lg bg-[#FFF8EE] text-neutral-950 flex items-center justify-center font-bold text-xs shadow-xs border border-[#FFC067]/70">
+                              {item.monthKey}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-neutral-900">
+                                  จองเวรเดือน: {item.monthKey}
+                                </span>
+                                {isUnlockedNow ? (
+                                  <span className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 font-semibold border border-emerald-200">
+                                    ✓ เปิดให้จองแล้ว
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] px-2 py-0.5 rounded-md bg-[#FFF8EE] text-neutral-950 font-semibold border border-[#FFC067]">
+                                    🔒 ล็อค (ยังไม่ถึงเวลา)
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[11px] text-neutral-500">
+                                กำหนดเปิด: <strong>{item.openDate}</strong> เวลา <strong>{item.openTime} น.</strong>
+                                {item.notes ? ` (${item.notes})` : ''}
+                              </span>
+                            </div>
+                          </div>
+
+                          <button
+                            onClick={() => deleteMonthUnlockSchedule(item.monthKey)}
+                            className="p-1 rounded-lg text-neutral-400 hover:text-red-600 hover:bg-red-50"
+                            title="ลบกำหนดการนี้"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: Bathing Manager */}
+          {activeTab === 'bathing' && (
+            <div className="space-y-4">
+              <div>
+                <span className="text-[11px] font-bold text-neutral-900 uppercase tracking-wider block mb-2">
+                  รายการวันที่เปิดให้จองเวรอาบน้ำ ({bathingSchedules.filter((b) => b.enabled).length} วัน):
+                </span>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-60 overflow-y-auto">
+                  {bathingSchedules
+                    .filter((b) => b.enabled)
+                    .map((item) => {
+                      const currentBathDuty = shifts.find((s) => s.date === item.date && s.type === 'bathing');
+                      const bathUser = getUserById(currentBathDuty?.userId);
+
+                      return (
+                        <div
+                          key={item.date}
+                          className="flex items-center justify-between p-3 rounded-xl bg-white border border-[#FFC067]/70 shadow-xs"
+                        >
+                          <div className="flex items-center gap-2.5">
+                            <span className="text-base">🛁</span>
+                            <div>
+                              <span className="font-bold text-neutral-900 block">
+                                {item.date}
+                              </span>
+                              <span className="text-[10px] text-neutral-500">
+                                {bathUser ? `ผู้รับผิดชอบ: ${bathUser.icon} ${bathUser.username}` : 'ยังไม่มีผู้จอง'}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-1">
+                            {currentBathDuty && (
+                              <button
+                                onClick={() => adminClearShiftPart(item.date, 'bathing', 'bathing')}
+                                className="px-2 py-1 text-[10px] text-red-600 bg-red-50 hover:bg-red-100 rounded-lg font-bold border border-red-200"
+                                title="ปลดผู้จองเวรนี้"
+                              >
+                                ปลดเวร
+                              </button>
+                            )}
+
+                            <button
+                              onClick={() => toggleBathingDate(item.date, false)}
+                              className="p-1 rounded-lg text-neutral-400 hover:text-red-600 hover:bg-red-50"
+                              title="ลบวันอาบน้ำนี้"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 4: Members Manager */}
+          {activeTab === 'members' && (
+            <div className="space-y-4">
+              <form
+                onSubmit={handleAddMember}
+                className="p-4 rounded-xl bg-[#FFF8EE]/60 border border-[#FFC067]/70 space-y-3"
+              >
+                <span className="text-xs font-bold text-neutral-900 block">
+                  เพิ่มหรือสร้างบัญชีสมาชิกใหม่
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] text-neutral-600 mb-1 font-medium">
+                      ชื่อผู้ใช้ (Username) *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="กรอกชื่อผู้ใช้ / อีเมล..."
+                      value={newUsername}
+                      onChange={(e) => setNewUsername(e.target.value)}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-white border border-neutral-200 text-xs focus:outline-hidden focus:border-[#FFC067]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] text-neutral-600 mb-1 font-medium">
+                      รหัสผ่าน (Password)
+                    </label>
+                    <input
+                      type="password"
+                      placeholder="กรอกรหัสผ่าน..."
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-white border border-neutral-200 text-xs focus:outline-hidden focus:border-[#FFC067]"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-neutral-600 mb-1 font-medium">
+                    เลือกสี (Color)
+                  </label>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {AVAILABLE_COLORS.map((col) => (
+                      <button
+                        key={col}
+                        type="button"
+                        onClick={() => setNewMemberColor(col)}
+                        className={`w-5 h-5 rounded-full border-2 transition-transform ${
+                          newMemberColor === col ? 'scale-125 border-neutral-900 ring-2 ring-[#FFC067]' : 'border-white'
+                        }`}
+                        style={{ backgroundColor: col }}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-neutral-600 mb-1 font-medium">
+                    เลือกไอคอน (Icon)
+                  </label>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {AVAILABLE_ICONS.map((ic) => (
+                      <button
+                        key={ic}
+                        type="button"
+                        onClick={() => setNewMemberIcon(ic)}
+                        className={`w-7 h-7 rounded-lg border text-sm flex items-center justify-center transition-all cursor-pointer ${
+                          newMemberIcon === ic ? 'bg-[#FFF8EE] text-neutral-950 border-[#FFC067] shadow-xs font-bold' : 'bg-white border-neutral-200'
+                        }`}
+                      >
+                        {ic}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex justify-end pt-1">
+                  <button
+                    type="submit"
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[#FFF8EE] hover:bg-[#FFC067]/40 active:bg-[#FFC067] text-neutral-950 font-bold shadow-xs border border-[#FFC067]/70 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>บันทึกสมาชิกใหม่</span>
+                  </button>
+                </div>
+              </form>
+
+              {/* Members List */}
+              <div>
+                <span className="text-[11px] font-bold text-neutral-900 uppercase tracking-wider block mb-2">
+                  รายชื่อบัญชีผู้ใช้ในระบบ ({users.length} บัญชี):
+                </span>
+
+                <div className="space-y-2 max-h-60 overflow-y-auto">
+                  {users.length === 0 ? (
+                    <div className="p-6 text-center bg-white rounded-xl border border-neutral-200 text-neutral-400">
+                      <p className="text-xs font-semibold text-neutral-600">ยังไม่มีบัญชีผู้ใช้ในระบบ</p>
+                      <p className="text-[11px] text-neutral-400 mt-1">สามารถสร้างบัญชีผ่านฟอร์มด้านบน หรือเข้าสู่ระบบด้วย LINE</p>
+                    </div>
+                  ) : (
+                    users.map((u) => (
+                      <div
+                        key={u.id}
+                        className="flex items-center justify-between p-3 rounded-xl bg-white border border-[#FFC067]/70 shadow-xs"
+                      >
+                        <div className="flex items-center gap-3">
+                          <span className="text-lg">{u.icon || '🐶'}</span>
+                          <span
+                            className="w-3 h-3 rounded-full"
+                            style={{ backgroundColor: u.color }}
+                          />
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-neutral-900">
+                                {u.username || u.name}
+                              </span>
+                              {u.nickname && u.nickname !== u.name && (
+                                <span className="text-xs text-neutral-500 font-normal">
+                                  ({u.nickname})
+                                </span>
+                              )}
+                              <span className="text-[10px] px-1.5 py-0.2 rounded-md bg-[#FFF8EE] text-neutral-950 font-bold border border-[#FFC067]/60">
+                                {u.role === 'admin' ? 'Admin' : 'Member'}
+                              </span>
+                            </div>
+                            {u.password && (
+                              <span className="text-[10px] text-neutral-400 font-mono">
+                                Pass: {u.password}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (confirm(`ยืนยันการลบบัญชีผู้ใช้ "${u.username || u.name}"? ระบบจะลบเวรที่ผูกไว้ทั้งหมดด้วย`)) {
+                                deleteUser(u.id);
+                              }
+                            }}
+                            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-red-600 hover:bg-red-50 text-[11px] font-bold transition-colors border border-red-200 cursor-pointer"
+                            title="ลบบัญชีผู้ใช้"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>ลบบัญชี</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 5: Fair Auto Distribute */}
+          {activeTab === 'fair_auto' && (
+            <div className="space-y-4">
+              <div className="p-4 rounded-xl bg-[#FFF8EE] border border-[#FFC067] text-neutral-900">
+                <div className="flex items-center gap-2 font-bold mb-1">
+                  <Sparkles className="w-4 h-4 text-amber-600" />
+                  <span>Auto Fair Share Engine</span>
+                </div>
+                <p className="text-[11px] text-neutral-700 leading-relaxed font-medium">
+                  ระบบจะคำนวณจำนวนวันในเดือนนั้นๆ แล้วแบ่งเวรทั้งวัน (เช้า+เย็น) ให้สมาชิกทุกคน ({users.length} คน) เท่ากันแบบเป๊ะๆ
+                </p>
+              </div>
+
+              <div className="p-4 rounded-xl bg-white border border-[#FFC067]/70 shadow-xs space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[11px] text-neutral-600 mb-1 font-medium">
+                      เลือกเดือน
+                    </label>
+                    <select
+                      value={autoMonth}
+                      onChange={(e) => setAutoMonth(Number(e.target.value))}
+                      className="w-full px-3 py-2 rounded-xl bg-neutral-50 border border-neutral-200 text-xs focus:outline-hidden focus:border-[#FFC067]"
+                    >
+                      {Array.from({ length: 12 }).map((_, i) => (
+                        <option key={i} value={i}>
+                          Month {i + 1}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] text-neutral-600 mb-1 font-medium">
+                      เลือกปี
+                    </label>
+                    <input
+                      type="number"
+                      value={autoYear}
+                      onChange={(e) => setAutoYear(Number(e.target.value))}
+                      className="w-full px-3 py-2 rounded-xl bg-neutral-50 border border-neutral-200 text-xs focus:outline-hidden focus:border-[#FFC067]"
+                    />
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleRunAutoDistribute}
+                  className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-[#FFF8EE] hover:bg-[#FFC067]/40 active:bg-[#FFC067] text-neutral-950 font-bold shadow-xs transition-all border border-[#FFC067]/70 cursor-pointer"
+                >
+                  <Sparkles className="w-4 h-4 text-neutral-950" />
+                  <span>กดรันหารเวรทั้งเดือนอัตโนมัติ</span>
+                </button>
+
+                {autoSuccessMessage && (
+                  <div className="p-2.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-center font-medium animate-in fade-in">
+                    {autoSuccessMessage}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 sm:px-6 py-3 border-t border-[#FFC067]/40 bg-[#FFF8EE]/40 flex items-center justify-between">
+          <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+            <button
+              onClick={async () => {
+                if (confirm('⚠️ ยืนยันการล้างข้อมูลบัญชีผู้ใช้และตารางเวรทั้งหมดหรือไม่? (ข้อมูลบัญชีผู้ใช้, เวรทั้งหมด, คำขอแลกเวร, และประวัติกิจกรรม จะถูกล้างถาวร)')) {
+                  const ok = await wipeAllData();
+                  if (ok) {
+                    alert('ล้างข้อมูลบัญชีผู้ใช้และตารางเวรทั้งหมดเรียบร้อยแล้ว!');
+                    onClose();
+                  }
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-red-50 hover:bg-red-100 text-red-700 text-xs font-bold border border-red-200 transition-colors cursor-pointer"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-red-600" />
+              <span>ล้างข้อมูลบัญชีและตารางเวรทั้งหมด</span>
+            </button>
+
+            <button
+              onClick={() => {
+                if (confirm('ต้องการรีเซ็ตข้อมูลทั้งหมดกลับเป็นค่าเริ่มต้นหรือไม่?')) {
+                  resetToDefaultData();
+                  onClose();
+                }
+              }}
+              className="flex items-center gap-1 text-[11px] text-neutral-400 hover:text-neutral-700 transition-colors cursor-pointer"
+            >
+              <RotateCcw className="w-3 h-3" />
+              <span>Reset Demo Data</span>
+            </button>
+          </div>
+
+          <button
+            onClick={onClose}
+            className="px-4 py-1.5 rounded-xl bg-[#FFF8EE] hover:bg-[#FFC067]/40 text-neutral-950 text-xs font-bold border border-[#FFC067]/70 cursor-pointer"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};

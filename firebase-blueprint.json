@@ -1,0 +1,168 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "Registered member who can book dog care shifts",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "username": { "type": "string", "maxLength": 64 },
+        "name": { "type": "string", "maxLength": 128 },
+        "nickname": { "type": "string", "maxLength": 64 },
+        "password": { "type": "string", "maxLength": 64 },
+        "icon": { "type": "string", "maxLength": 16 },
+        "color": { "type": "string", "maxLength": 32 },
+        "role": { "type": "string", "enum": ["admin", "member"] },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "username", "icon", "color"]
+    },
+    "ShiftAssignment": {
+      "title": "ShiftAssignment",
+      "description": "Duty booking for dog care (daily morning+evening or bathing)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "date": { "type": "string", "maxLength": 32 },
+        "type": { "type": "string", "enum": ["daily", "bathing"] },
+        "userId": { "type": "string", "maxLength": 128 },
+        "morningUserId": { "type": "string", "maxLength": 128 },
+        "eveningUserId": { "type": "string", "maxLength": 128 },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "date", "type", "userId"]
+    },
+    "CalendarTaskNote": {
+      "title": "CalendarTaskNote",
+      "description": "Custom tasks (top bar/range) and notes (bottom bar) on the calendar",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "type": { "type": "string", "enum": ["task", "note"] },
+        "title": { "type": "string", "maxLength": 500 },
+        "startDate": { "type": "string", "maxLength": 32 },
+        "endDate": { "type": "string", "maxLength": 32 },
+        "color": { "type": "string", "maxLength": 32 },
+        "icon": { "type": "string", "maxLength": 16 },
+        "authorId": { "type": "string", "maxLength": 128 },
+        "authorName": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "type", "title", "startDate", "authorId"]
+    },
+    "BathingSchedule": {
+      "title": "BathingSchedule",
+      "description": "Configured dates designated for bathing duty",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "date": { "type": "string", "maxLength": 32 },
+        "enabled": { "type": "boolean" },
+        "notes": { "type": "string", "maxLength": 200 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "date", "enabled"]
+    },
+    "SwapRequest": {
+      "title": "SwapRequest",
+      "description": "Shift swap negotiation between two members",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "fromUserId": { "type": "string", "maxLength": 128 },
+        "toUserId": { "type": "string", "maxLength": 128 },
+        "fromDate": { "type": "string", "maxLength": 32 },
+        "fromShiftPart": { "type": "string", "enum": ["morning", "evening", "full_day", "bathing"] },
+        "toDate": { "type": "string", "maxLength": 32 },
+        "toShiftPart": { "type": "string", "enum": ["morning", "evening", "full_day", "bathing"] },
+        "status": { "type": "string", "enum": ["pending", "accepted", "declined", "cancelled"] },
+        "note": { "type": "string", "maxLength": 500 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "fromUserId", "toUserId", "fromDate", "toDate", "status"]
+    },
+    "Announcement": {
+      "title": "Announcement",
+      "description": "Announcement bulletin for dog care info",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 200 },
+        "content": { "type": "string", "maxLength": 2000 },
+        "date": { "type": "string", "maxLength": 32 },
+        "authorId": { "type": "string", "maxLength": 128 },
+        "authorName": { "type": "string", "maxLength": 128 },
+        "badge": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "title", "content", "authorId", "authorName"]
+    },
+    "ActivityLog": {
+      "title": "ActivityLog",
+      "description": "Audit record of user booking and swap actions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "userName": { "type": "string", "maxLength": 128 },
+        "actionType": { "type": "string", "maxLength": 64 },
+        "description": { "type": "string", "maxLength": 1000 },
+        "timestamp": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "userId", "userName", "actionType", "description", "timestamp"]
+    },
+    "DogProfile": {
+      "title": "DogProfile",
+      "description": "Dog profile and routine schedules",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 128 },
+        "breed": { "type": "string", "maxLength": 128 },
+        "age": { "type": "string", "maxLength": 64 },
+        "avatar": { "type": "string", "maxLength": 64 },
+        "notes": { "type": "string", "maxLength": 2000 },
+        "morningRoutine": { "type": "string", "maxLength": 500 },
+        "eveningRoutine": { "type": "string", "maxLength": 500 },
+        "bathingRoutine": { "type": "string", "maxLength": 500 }
+      },
+      "required": ["name", "morningRoutine", "eveningRoutine"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "Registered app members"
+    },
+    "/shifts/{shiftId}": {
+      "schema": { "$ref": "#/entities/ShiftAssignment" },
+      "description": "Duty shift bookings"
+    },
+    "/calendar_tasks/{taskId}": {
+      "schema": { "$ref": "#/entities/CalendarTaskNote" },
+      "description": "Calendar tasks and notes"
+    },
+    "/bathing_schedules/{scheduleId}": {
+      "schema": { "$ref": "#/entities/BathingSchedule" },
+      "description": "Designated dates for bathing duty"
+    },
+    "/swap_requests/{requestId}": {
+      "schema": { "$ref": "#/entities/SwapRequest" },
+      "description": "Member swap requests"
+    },
+    "/announcements/{announcementId}": {
+      "schema": { "$ref": "#/entities/Announcement" },
+      "description": "Bulletin announcements"
+    },
+    "/activity_logs/{logId}": {
+      "schema": { "$ref": "#/entities/ActivityLog" },
+      "description": "Action history logs"
+    },
+    "/settings/{settingId}": {
+      "schema": { "$ref": "#/entities/DogProfile" },
+      "description": "Dog care settings and profile"
+    }
+  }
+}
