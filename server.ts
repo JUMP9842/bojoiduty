@@ -184,15 +184,9 @@ app.post('/api/line/config', async (req, res) => {
 app.get('/api/line/login-url', (req, res) => {
   const clientOrigin = (req.query.client_origin as string) || (req.get('origin') as string) || `${req.protocol}://${req.get('host')}`;
   
-  const host = req.get('host');
-  const protocol = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'https';
-  const currentHostUrl = `${protocol}://${host}`;
-
-  // Dynamically determine redirectUri based on current host (Vercel or AI Studio container)
-  const redirectUri = (host && !host.includes('localhost'))
-    ? `${currentHostUrl}/api/auth/line/callback`
-    : `${DEV_SERVER_URL}/api/auth/line/callback`;
-
+  // Use the stable registered Callback URL on LINE Console (DEV_SERVER_URL)
+  // The client origin on Vercel is passed in state and redirected back seamlessly
+  const redirectUri = `${DEV_SERVER_URL}/api/auth/line/callback`;
   const state = encodeURIComponent(clientOrigin);
 
   if (!lineConfig.lineChannelId) {
@@ -255,14 +249,7 @@ async function handleLineOAuthCallback(req: express.Request, res: express.Respon
       `);
     }
 
-    const host = req.get('host');
-    const protocol = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'https';
-    const currentHostUrl = `${protocol}://${host}`;
-    const defaultRedirectUri = (host && !host.includes('localhost'))
-      ? `${currentHostUrl}/api/auth/line/callback`
-      : `${DEV_SERVER_URL}/api/auth/line/callback`;
-
-    const redirectUri = req.body?.redirectUri || defaultRedirectUri;
+    const redirectUri = req.body?.redirectUri || `${DEV_SERVER_URL}/api/auth/line/callback`;
 
     if (!lineConfig.lineChannelId || !lineConfig.lineChannelSecret) {
       const errMsg = 'กรุณาตั้งค่า LINE Channel ID และ Channel Secret ก่อนใช้งาน LINE Login';
