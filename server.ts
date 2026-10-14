@@ -27,7 +27,10 @@ let tunnelStatus = {
 // Initialize Firestore for server-side LINE OA queries
 let serverDb: any = null;
 try {
-  const cfgPath = path.join(__dirname, 'firebase-applet-config.json');
+  let cfgPath = path.join(__dirname, 'firebase-applet-config.json');
+  if (!fs.existsSync(cfgPath)) {
+    cfgPath = path.join(process.cwd(), 'firebase-applet-config.json');
+  }
   if (fs.existsSync(cfgPath)) {
     const firebaseConfig = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
     const fApp = initializeApp(firebaseConfig, 'server-app');
@@ -561,9 +564,9 @@ app.post('/api/line/webhook', async (req, res) => {
                   } else if (s.morningUserId === linkedUser.id && s.eveningUserId === linkedUser.id) {
                     partText = '☀️🌙 ทั้งเวรเช้าและเวรเย็น';
                   } else if (s.morningUserId === linkedUser.id) {
-                    partText = '☀️ เวรเช้า (08:00 - 12:00 น.)';
+                    partText = '☀️ เวรเช้า';
                   } else if (s.eveningUserId === linkedUser.id) {
-                    partText = '🌙 เวรเย็น (16:00 - 20:00 น.)';
+                    partText = '🌙 เวรเย็น';
                   }
 
                   const isToday = s.date === todayStr;
@@ -576,12 +579,11 @@ app.post('/api/line/webhook', async (req, res) => {
                 replyText =
                   `🐶 [BojoiDuty] ตารางเวรที่ใกล้จะถึงของคุณ ${userName}:\n\n` +
                   shiftLines.join('\n\n') +
-                  `\n\n✨ สู้ ๆ นะครับน้องหมารออยู่! 🐾\n🌐 จัดการเวรเพิ่มเติมได้ที่: ${hostUrl}`;
+                  `\n\n✨ สู้ ๆ นะครับน้องหมารออยู่! 🐾`;
               } else {
                 replyText =
                   `🐶 [BojoiDuty] สวัสดีครับคุณ ${userName}\n\n` +
-                  `🎉 ช่วงนี้คุณยังไม่มีตารางเวรที่ต้องปฏิบัติหน้าที่ครับ\n\n` +
-                  `หากต้องการจองเวรเลี้ยงน้องหมา สามารถกดเข้าสู่ระบบได้เลยที่:\n🌐 ${hostUrl}`;
+                  `🎉 ช่วงนี้คุณยังไม่มีตารางเวรที่ต้องปฏิบัติหน้าที่ครับ`;
               }
             } else {
               // หากบัญชี LINE ยังไม่ได้ผูกกับสมาชิกในเว็บ แสดงเวรของทีมที่ใกล้จะถึงแทน
@@ -606,8 +608,7 @@ app.post('/api/line/webhook', async (req, res) => {
 
               replyText =
                 `🐶 [BojoiDuty] ตารางเวรของทีมที่ใกล้จะถึง:\n\n` +
-                teamText +
-                `\n\n💡 หมายเหตุ: บัญชี LINE ของท่านยังไม่ได้เชื่อมต่อกับชื่อสมาชิกในเว็บ\nหากต้องการดู "เวรของฉัน" โดยเฉพาะ กรุณาเข้าสู่ระบบในเว็บแล้วกด "เชื่อมต่อ LINE" ในหน้าโปรไฟล์ครับ\n🌐 ${hostUrl}`;
+                teamText;
             }
           } else if (isTodayQuery) {
             // === ฟังก์ชั่น: เวรวันนี้ ===
@@ -641,13 +642,13 @@ app.post('/api/line/webhook', async (req, res) => {
 
               replyText =
                 `🐶 [BojoiDuty] ตารางเวรประจำวันนี้ (${formatThaiDateDisplay(todayStr)}):\n\n` +
-                `☀️ เวรเช้า (08:00 - 12:00 น.): ${morningName}\n` +
-                `🌙 เวรเย็น (16:00 - 20:00 น.): ${eveningName}` +
+                `☀️ เวรเช้า: ${morningName}\n` +
+                `🌙 เวรเย็น: ${eveningName}` +
                 bathingText +
                 notesText +
                 `\n\nอย่าลืมให้อาหารและพาน้องหมาไปวิ่งเล่นด้วยนะครับ 🐕`;
             } else {
-              replyText = `🐶 [BojoiDuty] วันนี้ (${formatThaiDateDisplay(todayStr)}) ยังไม่มีผู้จองเวรครับ สมาชิกสามารถเข้าไปจองเวรได้ที่:\n🌐 ${hostUrl}`;
+              replyText = `🐶 [BojoiDuty] วันนี้ (${formatThaiDateDisplay(todayStr)}) ยังไม่มีผู้จองเวรครับ`;
             }
           } else if (isTomorrowQuery) {
             // === ฟังก์ชั่น: เวรพรุ่งนี้ ===
@@ -681,8 +682,8 @@ app.post('/api/line/webhook', async (req, res) => {
 
               replyText =
                 `🐶 [BojoiDuty] ตารางเวรวันพรุ่งนี้ (${formatThaiDateDisplay(tomorrowStr)}):\n\n` +
-                `☀️ เวรเช้า (08:00 - 12:00 น.): ${morningName}\n` +
-                `🌙 เวรเย็น (16:00 - 20:00 น.): ${eveningName}` +
+                `☀️ เวรเช้า: ${morningName}\n` +
+                `🌙 เวรเย็น: ${eveningName}` +
                 bathingText +
                 notesText +
                 `\n\nเตรียมตัวดูแลน้องหมากันนะครับ 🐾`;
@@ -706,10 +707,9 @@ app.post('/api/line/webhook', async (req, res) => {
 
               replyText =
                 `📋 [BojoiDuty] ตารางเวรที่ใกล้จะถึงของทีม:\n\n` +
-                lines.join('\n') +
-                `\n\n🌐 เข้าดูปฏิทินแบบเต็มได้ที่: ${hostUrl}`;
+                lines.join('\n');
             } else {
-              replyText = `📋 [BojoiDuty] ยังไม่มีเวรที่จองไว้ในช่วง 7 วันนี้ครับ ท่านสามารถจองเวรได้ที่:\n🌐 ${hostUrl}`;
+              replyText = `📋 [BojoiDuty] ยังไม่มีเวรที่จองไว้ในช่วง 7 วันนี้ครับ`;
             }
           } else {
             // === คำสั่งอื่นๆ / ทักทาย ===
@@ -723,8 +723,7 @@ app.post('/api/line/webhook', async (req, res) => {
               `• "เวรที่ใกล้จะถึง" หรือ "เวรของฉัน" เพื่อดูเวรของคุณ\n` +
               `• "เวรวันนี้" เพื่อดูว่าวันนี้ใครอยู่เวร\n` +
               `• "เวรพรุ่งนี้" เพื่อดูเวรวันพรุ่งนี้\n` +
-              `• "ตารางเวร" เพื่อดูเวรของทีมทั้งหมด\n\n` +
-              `🌐 เข้าสู่ระบบ BojoiDuty: ${hostUrl}`;
+              `• "ตารางเวร" เพื่อดูเวรของทีมทั้งหมด`;
           }
 
           // ส่งข้อความตอบกลับ พร้อม Quick Reply Chips 4 ปุ่ม
@@ -966,11 +965,11 @@ async function checkAndSendScheduledReminders(forceRun: boolean = false) {
           if (shift.type === 'bathing') {
             partText = '🛁 เวรอาบน้ำดูแลน้องหมา';
           } else if (shift.morningUserId === userId && shift.eveningUserId === userId) {
-            partText = '☀️🌙 ทั้งเวรเช้า (08:00 - 12:00 น.) และเวรเย็น (16:00 - 20:00 น.)';
+            partText = '☀️🌙 ทั้งเวรเช้าและเวรเย็น';
           } else if (shift.morningUserId === userId) {
-            partText = '☀️ เวรเช้า (08:00 - 12:00 น.)';
+            partText = '☀️ เวรเช้า';
           } else if (shift.eveningUserId === userId) {
-            partText = '🌙 เวรเย็น (16:00 - 20:00 น.)';
+            partText = '🌙 เวรเย็น';
           }
 
           const thaiDate = formatThaiDateDisplay(target.dateStr);
@@ -990,7 +989,7 @@ async function checkAndSendScheduledReminders(forceRun: boolean = false) {
             msg += `\n━━━━━━━━━━━━━━━\n📢 [ประกาศ & ข่าวสารสำคัญประจำวันนี้]:\n${announcementText}\n━━━━━━━━━━━━━━━\n`;
           }
 
-          msg += `\n✨ สู้ ๆ นะครับ น้องหมารออยู่! 🐾\n🌐 เข้าสู่ระบบ: ${tunnelStatus.url}`;
+          msg += `\n✨ สู้ ๆ นะครับ น้องหมารออยู่! 🐾`;
 
           // Send LINE Push Notification
           try {
@@ -1141,5 +1140,9 @@ async function startLocalTunnel() {
   }
 }
 
-startServer();
+if (!process.env.VERCEL) {
+  startServer();
+}
+
+export default app;
 

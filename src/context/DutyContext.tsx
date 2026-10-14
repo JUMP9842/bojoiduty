@@ -914,10 +914,10 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // Automatic LINE Push Notification
     if (targetUser.lineUserId) {
-      const shiftPartText = part === 'morning' ? 'เวรเช้า (08:00 - 12:00)' : part === 'evening' ? 'เวรเย็น (16:00 - 20:00)' : 'เวรเต็มวัน';
+      const shiftPartText = part === 'morning' ? 'เวรเช้า' : part === 'evening' ? 'เวรเย็น' : 'เวรเต็มวัน';
       sendLinePushNotification(
         targetUser.lineUserId,
-        `🐶 [BojoiDuty] แอดมินได้จัดเวรใหม่ให้คุณ!\n📅 วันที่: ${date}\n📌 ประเภท: ${type === 'daily' ? shiftPartText : '🛁 เวรอาบน้ำ'}\n${notes ? `📝 หมายเหตุ: ${notes}\n` : ''}กรุณาตรวจสอบในตารางปฏิทิน BojoiDuty`
+        `🐶 [BojoiDuty] แอดมินได้จัดเวรใหม่ให้คุณ!\n📅 วันที่: ${date}\n📌 ประเภท: ${type === 'daily' ? shiftPartText : '🛁 เวรอาบน้ำ'}${notes ? `\n📝 หมายเหตุ: ${notes}` : ''}`
       );
     }
 
@@ -1073,8 +1073,7 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
         `จากคุณ: ${currentUser.nickname || currentUser.name}\n` +
         `📅 เวรของคุณ: ${data.fromDate} (${shiftPartName[data.fromShiftPart] || 'เวร'})\n` +
         `🔄 เสนอสลับกับ: ${data.toDate} (${shiftPartName[data.toShiftPart] || 'เวร'})\n` +
-        `📝 หมายเหตุ: ${data.note || '-'}\n` +
-        `กรุณาเข้าสู่ระบบเพื่อตอบรับหรือปฏิเสธคำขอ`
+        `📝 หมายเหตุ: ${data.note || '-'}`
       );
     }
 

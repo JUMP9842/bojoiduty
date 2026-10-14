@@ -9,7 +9,6 @@ import { BackendModal } from './components/BackendModal';
 import { SwapModal } from './components/SwapModal';
 import { AuthModal } from './components/AuthModal';
 import { DeviceVerificationModal } from './components/DeviceVerificationModal';
-import { UpcomingDutyAlert } from './components/UpcomingDutyAlert';
 import { LineCallbackHandler } from './components/LineCallbackHandler';
 import { LineProfileSetupModal } from './components/LineProfileSetupModal';
 
@@ -60,9 +59,6 @@ function MainApp() {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-8 py-6 sm:py-8">
-        {/* Personal Upcoming Shift LINE Alert Banner */}
-        <UpcomingDutyAlert />
-
         {/* Top: Announcements Board */}
         <AnnouncementBoard />
 

@@ -44,7 +44,7 @@ export const safeFetchJson = async (url: string, options?: RequestInit): Promise
         status: res.status,
         data: {
           success: false,
-          error: 'ระบบทำงานในโหมด Static Hosting (เช่น Vercel) ซึ่งไม่มี Node.js Backend Server รองรับ API กรุณาใช้งานผ่าน AI Studio หรือรันในโหมด Full-Stack',
+          error: 'ไม่สามารถโหลดข้อมูลจาก API ได้ (Server ตอบกลับเป็น HTML/Non-JSON) กรุณาตรวจสอบว่าโฮสต์รองรับ Full-Stack Serverless Functions (/api)',
         },
       };
     }
