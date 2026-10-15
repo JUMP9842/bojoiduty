@@ -407,6 +407,29 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Helper to send LINE Push Notification via Messaging API (Backend Proxy - No CORS)
+  // Helper to resolve Google Apps Script Web App URL
+  const getGoogleAppsScriptUrl = async (): Promise<string> => {
+    let gasUrl = (import.meta.env as any).VITE_LINE_GAS_URL || (import.meta.env as any).VITE_GAS_WEB_APP_URL || '';
+    try {
+      const local = localStorage.getItem('line_gas_url') || localStorage.getItem('gas_web_app_url');
+      if (local && local.trim().startsWith('https://script.google.com/')) {
+        gasUrl = local.trim();
+      }
+    } catch {}
+    try {
+      if (!gasUrl) {
+        const cfgDoc = await getDoc(doc(db, 'settings', 'line')).catch(() => null);
+        if (cfgDoc && cfgDoc.exists()) {
+          const data = cfgDoc.data();
+          if (data.gasUrl && typeof data.gasUrl === 'string' && data.gasUrl.trim().startsWith('https://script.google.com/')) {
+            gasUrl = data.gasUrl.trim();
+          }
+        }
+      }
+    } catch {}
+    return gasUrl.trim();
+  };
+
   // Helper to resolve LINE token on frontend
   const getFrontendLineToken = async (): Promise<string> => {
     let token = (import.meta.env as any).VITE_LINE_CHANNEL_ACCESS_TOKEN || DEFAULT_LINE_ACCESS_TOKEN || '';
@@ -435,7 +458,7 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
   ): Promise<boolean> => {
     if (!targetUserIdOrName) {
       if (showDiagnosticAlert) {
-        window.alert('ผู้ใช้คนนี้ยังไม่ได้ผูกบัญชี LINE OA (ไม่ได้ระบุชื่อผู้ใช้หรือ ID)');
+        window.alert('เกิดข้อผิดพลาดในการส่ง LINE: ไม่ได้ระบุผู้รับ (Target User ID หรือ ชื่อผู้ใช้ว่างเปล่า)');
       }
       return false;
     }
@@ -486,7 +509,7 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    // 3. Resolve targetLineUserId
+    // 3. Resolve targetLineUserId (field lineUserId, lineId, line_user_id, or uid starting with U)
     const rawLineId = matchedUser
       ? matchedUser.lineUserId ||
         matchedUser.lineId ||
@@ -501,63 +524,104 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
       : cleanTarget;
 
     if (!targetLineUserId || !targetLineUserId.startsWith('U')) {
-      console.warn(`[LINE Push Diagnostic] ผู้ใช้คนนี้ยังไม่ได้ผูกบัญชี LINE OA: ${cleanTarget}`);
+      console.warn(`[LINE Push Diagnostic] ไม่พบรหัส LINE User ID สำหรับ: ${cleanTarget}`);
       if (showDiagnosticAlert) {
-        window.alert(`ผู้ใช้คนนี้ยังไม่ได้ผูกบัญชี LINE OA (ไม่พบรหัส LINE User ID ที่ขึ้นต้นด้วย U สำหรับ ${userName || cleanTarget})`);
+        window.alert(`เกิดข้อผิดพลาดในการส่ง LINE: ผู้ใช้ "${userName}" ยังไม่ได้ผูกบัญชี LINE OA (ไม่พบรหัส LINE User ID ที่ขึ้นต้นด้วย U)`);
       }
       return false;
     }
 
-    // 4. Resolve Channel Access Token from Frontend
+    const gasUrl = await getGoogleAppsScriptUrl();
     const token = await getFrontendLineToken();
 
-    console.log(`[LINE Push Dispatch] Target LINE User ID: ${targetLineUserId} | Message: "${messageText}"`);
+    console.log(`[LINE Push Dispatch] Target: ${userName} (${targetLineUserId}) | Message: "${messageText}"`);
 
-    // 5. Send Payload to Backend Proxy API
-    try {
-      const response = await fetch(getApiUrl('/api/line/push-notification'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          to: targetLineUserId,
-          lineUserId: targetLineUserId,
-          userId: targetLineUserId,
-          targetUserId: targetLineUserId,
-          message: messageText,
-          messageText: messageText,
-          messages: [{ type: 'text', text: messageText }],
-          token: token,
-          channelAccessToken: token,
-        }),
-      });
-
-      const rawText = await response.text().catch(() => '');
-      let jsonResponse: any = null;
+    // 4. Primary direct POST to Google Apps Script Web App (if gasUrl is provided)
+    if (gasUrl) {
       try {
-        jsonResponse = rawText ? JSON.parse(rawText) : {};
-      } catch {}
+        console.log(`[LINE Push Direct Google Apps Script]: Sending to ${gasUrl}`);
+        const response = await fetch(gasUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+          body: JSON.stringify({
+            to: targetLineUserId,
+            messages: [{ type: 'text', text: messageText }],
+            token: token,
+          }),
+        });
 
-      if (!response.ok || (jsonResponse && jsonResponse.success === false)) {
-        const errorDetail = jsonResponse?.error || jsonResponse?.message || rawText || `HTTP Status ${response.status}`;
-        console.error(`[LINE Push Error] Status ${response.status}:`, errorDetail);
-        if (showDiagnosticAlert) {
-          window.alert(`เกิดข้อผิดพลาดในการส่ง LINE (Status ${response.status}): ${errorDetail}`);
+        const rawText = await response.text().catch(() => '');
+        let resData: any = {};
+        try {
+          resData = rawText ? JSON.parse(rawText) : {};
+        } catch {
+          resData = { text: rawText };
         }
-        return false;
-      }
 
-      console.log(`[LINE Push Success]: Delivered to ${userName} (${targetLineUserId})`, jsonResponse || rawText);
-      if (showDiagnosticAlert) {
-        window.alert(`ส่งแจ้งเตือน LINE สำเร็จไปยัง ${userName} (LINE ID: ${targetLineUserId})`);
+        if (response.ok && !resData.error && resData.message !== 'error') {
+          console.log(`[LINE Push Success via Google Apps Script]`, resData);
+          if (showDiagnosticAlert) {
+            window.alert(`ส่งการแจ้งเตือน LINE สำเร็จไปยัง ${userName}`);
+          }
+          return true;
+        } else {
+          const errMsg = resData.error || resData.message || rawText || `GAS Response error`;
+          console.error(`[GAS Push Error]:`, errMsg);
+          console.warn(`[GAS Push Notice]: ${errMsg} -> Falling back to Vercel Serverless API`);
+        }
+      } catch (gasErr: any) {
+        console.warn(`[GAS Push Exception]: ${gasErr.message || String(gasErr)} -> Falling back to Vercel Serverless API`);
       }
-      return true;
-    } catch (err: any) {
-      console.error(`[LINE Push Network Exception]`, err);
-      if (showDiagnosticAlert) {
-        window.alert(`เกิดข้อผิดพลาดในการส่ง LINE: ${err.message || String(err)}`);
-      }
-      return false;
     }
+
+    // 5. Fallback: Vercel / Express Backend Proxy Serverless Functions
+    const payload = {
+      to: targetLineUserId,
+      lineUserId: targetLineUserId,
+      userId: targetLineUserId,
+      targetUserId: targetLineUserId,
+      message: messageText,
+      messageText: messageText,
+      messages: [{ type: 'text', text: messageText }],
+      token: token,
+      channelAccessToken: token,
+    };
+
+    const apiEndpoints = ['/api/line/push-notification', '/api/line-push'];
+
+    for (const endpoint of apiEndpoints) {
+      try {
+        const response = await fetch(getApiUrl(endpoint), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        const rawText = await response.text().catch(() => '');
+        let jsonResponse: any = null;
+        try {
+          jsonResponse = rawText ? JSON.parse(rawText) : {};
+        } catch {}
+
+        if (response.ok && (jsonResponse?.success !== false && !jsonResponse?.error)) {
+          console.log(`[LINE Push Success via ${endpoint}]: Delivered to ${userName} (${targetLineUserId})`, jsonResponse || rawText);
+          if (showDiagnosticAlert) {
+            window.alert(`ส่งการแจ้งเตือน LINE สำเร็จไปยัง ${userName}`);
+          }
+          return true;
+        }
+
+        const errorDetail = jsonResponse?.error || jsonResponse?.message || rawText || `HTTP Status ${response.status}`;
+        console.warn(`[LINE Push Endpoint ${endpoint} Warning]: Status ${response.status}: ${errorDetail}`);
+      } catch (err: any) {
+        console.warn(`[LINE Push Endpoint ${endpoint} Exception]:`, err);
+      }
+    }
+
+    if (showDiagnosticAlert) {
+      window.alert(`เกิดข้อผิดพลาดในการส่ง LINE ผ่าน Vercel Serverless Function (โปรดตรวจสอบการตั้งค่า LINE Token ใน Vercel Environment Variables)`);
+    }
+    return false;
   };
 
   // Precise Custom Monthly Unlock Schedule & Window Check
