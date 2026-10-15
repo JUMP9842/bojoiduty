@@ -35,6 +35,9 @@ import {
 import { getShiftMorningUserId, getShiftEveningUserId } from '../utils/shiftUtils';
 import { getApiUrl } from '../utils/apiUtils';
 
+const DEFAULT_LINE_ACCESS_TOKEN =
+  'KuXbOznb4aCQvDid2OyJ8F4+k3o221q6owdzubhHzw0hNexdEEw+3bYMMY4EhgjA/UQ6WvBR5/Zyy1WgjZwITGugy5rnBqMnkBBpqJY4NGVHmd1wfImEstyXPUV3blruSEEwn+ywp8PHBBIk0smvYgdB04t89/1O/w1cDnyilFU=';
+
 export function cleanFirestoreData<T extends Record<string, any>>(obj: T): Record<string, any> {
   const clean: Record<string, any> = {};
   for (const key of Object.keys(obj)) {
@@ -489,18 +492,26 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
         to: lineUserId,
         messageText: messageText,
         messages: [{ type: 'text', text: messageText }],
+        lineAccessToken: DEFAULT_LINE_ACCESS_TOKEN,
       };
 
-      let res = await fetch('/api/line-push', {
+      const headers = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${DEFAULT_LINE_ACCESS_TOKEN}`,
+      };
+
+      let res: Response | null = null;
+
+      res = await fetch('/api/line-push', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(payload),
       }).catch(() => null);
 
       if (!res || !res.ok) {
         res = await fetch('/.netlify/functions/line-push', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify(payload),
         }).catch(() => null);
       }
@@ -508,7 +519,7 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!res || !res.ok) {
         res = await fetch(getApiUrl('/api/line-push'), {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify(payload),
         }).catch(() => null);
       }
@@ -516,11 +527,10 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!res || !res.ok) {
         res = await fetch(getApiUrl('/api/line/push-notification'), {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify(payload),
         }).catch(() => null);
       }
-
 
       const data = res ? await res.json().catch(() => null) : null;
       const httpStatus = res ? res.status : 0;
