@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 
 export const UpcomingDutyAlert: React.FC = () => {
-  const { currentUser, shifts, openLineFriendModal } = useDuty();
+  const { currentUser, shifts, openLineFriendModal, sendLinePushNotification } = useDuty();
 
   const [isSending, setIsSending] = useState(false);
   const [notificationStatus, setNotificationStatus] = useState<{
@@ -126,17 +126,9 @@ export const UpcomingDutyAlert: React.FC = () => {
         (dutySummary || 'ไม่มีเวรใน 7 วันนี้') +
         `\n\n✨ สู้ ๆ นะครับ น้องหมารออยู่! 🐾\nเข้าดูปฏิทินแบบเต็มได้ที่เว็บไซต์ BojoiDuty`;
 
-      const res = await fetch(getApiUrl('/api/line/push-notification'), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          targetUserId: currentUser.lineUserId,
-          messageText,
-        }),
-      });
+      const success = await sendLinePushNotification(currentUser.lineUserId, messageText);
 
-      const data = await res.json();
-      if (res.ok && data.success) {
+      if (success) {
         setNotificationStatus({
           type: 'success',
           msg: 'ส่งแจ้งเตือนตารางเวร (พร้อมโน้ต) เข้า LINE ของคุณสำเร็จเรียบร้อย!',
@@ -144,13 +136,13 @@ export const UpcomingDutyAlert: React.FC = () => {
       } else {
         setNotificationStatus({
           type: 'error',
-          msg: data.error || 'ไม่สามารถส่งข้อความได้ กรุณาตรวจสอบการตั้งค่า LINE Tokens',
+          msg: 'ไม่สามารถส่งข้อความได้ กรุณาตรวจสอบว่าได้กดแอดเพื่อน LINE OA (@090puwgd) แล้วหรือไม่',
         });
       }
     } catch (err: any) {
       setNotificationStatus({
         type: 'error',
-        msg: 'เกิดข้อผิดพลาดในการเชื่อมต่อ: ' + err.message,
+        msg: 'เกิดข้อผิดพลาดในการเชื่อมต่อ: ' + (err?.message || err),
       });
     } finally {
       setIsSending(false);
@@ -162,28 +154,38 @@ export const UpcomingDutyAlert: React.FC = () => {
     setNotificationStatus(null);
 
     try {
-      const res = await fetch(getApiUrl('/api/line/trigger-scheduled-reminders'), {
+      let res = await fetch(getApiUrl('/api/line/trigger-scheduled-reminders'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ force: true }),
       });
+      let data = await res.json().catch(() => null);
 
-      const data = await res.json();
-      if (res.ok && data.success) {
+      if (!res.ok || !data) {
+        const fallbackUrl = 'https://ais-dev-olsgx3yczrx7ghc5qkwxao-603131036827.asia-southeast1.run.app/api/line/trigger-scheduled-reminders';
+        res = await fetch(fallbackUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ force: true }),
+        });
+        data = await res.json().catch(() => null);
+      }
+
+      if (res.ok && data?.success) {
         setNotificationStatus({
           type: 'success',
-          msg: `🎉 ตรวจสอบและส่งการแจ้งเตือนสเกตดูลล่วงหน้า (D-3, D-1, วันนี้พร้อมโน้ตและประกาศ) ไปแล้ว ${data.sentCount} ข้อความ`,
+          msg: `🎉 ตรวจสอบและส่งการแจ้งเตือนสเกตดูลล่วงหน้า (D-3, D-1, วันนี้พร้อมโน้ตและประกาศ) ไปแล้ว ${data.sentCount || 0} ข้อความ`,
         });
       } else {
         setNotificationStatus({
           type: 'error',
-          msg: data.error || data.reason || 'ไม่สามารถประมวลผลการแจ้งเตือนสเกตดูลได้',
+          msg: data?.error || data?.reason || 'ไม่สามารถประมวลผลการแจ้งเตือนสเกตดูลได้',
         });
       }
     } catch (err: any) {
       setNotificationStatus({
         type: 'error',
-        msg: 'เกิดข้อผิดพลาดในการเชื่อมต่อ: ' + err.message,
+        msg: 'เกิดข้อผิดพลาดในการเชื่อมต่อ: ' + (err?.message || err),
       });
     } finally {
       setIsSending(false);

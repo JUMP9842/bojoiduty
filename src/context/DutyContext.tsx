@@ -356,15 +356,33 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const sendLinePushNotification = async (targetUserId: string, messageText: string): Promise<boolean> => {
     if (!targetUserId) return false;
     try {
-      const res = await fetch(getApiUrl('/api/line/push-notification'), {
+      let res = await fetch(getApiUrl('/api/line/push-notification'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ targetUserId, messageText }),
       });
-      const data = await res.json();
-      return res.ok && data.success;
-    } catch (err) {
-      console.warn('LINE Push Notification trigger failed:', err);
+      let data = await res.json().catch(() => null);
+
+      // If endpoint failed or returned non-JSON 404, fallback to backend Express container directly
+      if (!res.ok || !data) {
+        const fallbackUrl = 'https://ais-dev-olsgx3yczrx7ghc5qkwxao-603131036827.asia-southeast1.run.app/api/line/push-notification';
+        res = await fetch(fallbackUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ targetUserId, messageText }),
+        });
+        data = await res.json().catch(() => null);
+      }
+
+      if (res.ok && data?.success) {
+        console.log(`[LINE Push Sent]: to ${targetUserId}`);
+        return true;
+      } else if (data?.error) {
+        console.warn(`[LINE Push Failed]: to ${targetUserId}:`, data.error);
+      }
+      return false;
+    } catch (err: any) {
+      console.warn('LINE Push Notification trigger failed:', err?.message || err);
       return false;
     }
   };

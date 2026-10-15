@@ -359,3 +359,278 @@ export function handleLineConfig(req: any, res: any) {
       : '',
   });
 }
+
+// Initialize Firestore for Vercel / Express serverless calls
+import { initializeApp, getApps } from 'firebase/app';
+import { getFirestore, collection, getDocs, doc, getDoc } from 'firebase/firestore';
+
+const FALLBACK_FIREBASE_CONFIG = {
+  projectId: 'feisty-quasar-q53bd',
+  appId: '1:388800385483:web:6cf3b76992d27ecb89a64e',
+  apiKey: 'AIzaSyDkCS6LtGhrk0kU8WSfwDcMOv1QXexyrAg',
+  authDomain: 'feisty-quasar-q53bd.firebaseapp.com',
+  firestoreDatabaseId: 'ai-studio-pawsduty-53653dc7-02ef-4c8b-a749-e32b6a62213f',
+  storageBucket: 'feisty-quasar-q53bd.firebasestorage.app',
+  messagingSenderId: '388800385483',
+};
+
+let serverDb: any = null;
+try {
+  const existingApps = getApps();
+  const fApp = existingApps.find((a) => a.name === 'server-app') || initializeApp(FALLBACK_FIREBASE_CONFIG, 'server-app');
+  serverDb = getFirestore(fApp, FALLBACK_FIREBASE_CONFIG.firestoreDatabaseId);
+} catch (e: any) {
+  console.warn('[Shared Firestore Init Notice]:', e.message);
+}
+
+export function getLineQuickReplyItems() {
+  return {
+    items: [
+      { type: 'action', action: { type: 'message', label: '📅 เวรของฉัน', text: 'เวรของฉัน' } },
+      { type: 'action', action: { type: 'message', label: '☀️ เวรวันนี้', text: 'เวรวันนี้' } },
+      { type: 'action', action: { type: 'message', label: '🌙 เวรพรุ่งนี้', text: 'เวรพรุ่งนี้' } },
+      { type: 'action', action: { type: 'message', label: '📋 ตารางเวร 7 วัน', text: 'ตารางเวร' } },
+    ],
+  };
+}
+
+export function formatThaiDateDisplay(dateStr: string): string {
+  if (!dateStr) return '';
+  const parts = dateStr.split('-');
+  if (parts.length !== 3) return dateStr;
+  const y = parseInt(parts[0], 10) + 543;
+  const m = parseInt(parts[1], 10);
+  const d = parseInt(parts[2], 10);
+  const thaiMonths = [
+    'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
+    'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'
+  ];
+  return `${d} ${thaiMonths[m - 1]} ${y}`;
+}
+
+// 4. Push Notification Handler
+export async function handleLinePushNotification(req: any, res: any) {
+  try {
+    const config = getLineConfig();
+    const body = req.body || {};
+    const { targetUserId, messageText, flexMessage } = body;
+
+    if (!config.lineAccessToken) {
+      return sendJson(res, 200, {
+        success: false,
+        error: 'ยังไม่ได้ตั้งค่า LINE Messaging API Channel Access Token ในระบบ',
+      });
+    }
+
+    if (config.lineAccessToken.length < 50) {
+      return sendJson(res, 200, {
+        success: false,
+        error:
+          'Channel Access Token ไม่ถูกต้อง: ต้องเป็น Long-lived Token (ขนาดยาว ~172 ตัวอักษร) จาก LINE Developers Console',
+      });
+    }
+
+    if (!targetUserId) {
+      return sendJson(res, 200, { success: false, error: 'กรุณาระบุ LINE User ID ของผู้รับ' });
+    }
+
+    const messages = flexMessage
+      ? [flexMessage]
+      : [
+          {
+            type: 'text',
+            text: messageText || '🐶 [BojoiDuty] คุณมีแจ้งเตือนเวรใหม่ที่ใกล้จะถึง กรุณาตรวจสอบในระบบ',
+            quickReply: getLineQuickReplyItems(),
+          },
+        ];
+
+    const pushResponse = await fetch('https://api.line.me/v2/bot/message/push', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.lineAccessToken}`,
+      },
+      body: JSON.stringify({
+        to: targetUserId,
+        messages,
+      }),
+    });
+
+    if (!pushResponse.ok) {
+      const errJson = await pushResponse.json().catch(() => ({}));
+      console.warn('[LINE Push API Error]:', errJson);
+      const errMsg = errJson?.message || JSON.stringify(errJson);
+      let userFriendlyNotice = `LINE API Error (${pushResponse.status}): ${errMsg}`;
+      if (errMsg.includes('property') && errMsg.includes('to')) {
+        userFriendlyNotice += ' (ผู้รับยังไม่ได้กดแอดเพื่อน LINE OA @090puwgd หรือบล็อกบอทอยู่)';
+      }
+      return sendJson(res, 200, {
+        success: false,
+        error: userFriendlyNotice,
+      });
+    }
+
+    return sendJson(res, 200, {
+      success: true,
+      message: 'ส่งการแจ้งเตือนเข้า LINE สำเร็จ!',
+      targetUserId,
+    });
+  } catch (err: any) {
+    console.warn('[Push Notification Error]:', err.message);
+    return sendJson(res, 200, { success: false, error: err.message });
+  }
+}
+
+// Memory log for sent reminders
+const sentRemindersLog = new Set<string>();
+
+function getDateNDaysAway(n: number): string {
+  const date = new Date();
+  date.setDate(date.getDate() + n);
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+// 5. Scheduled Reminders Handler
+export async function handleLineTriggerScheduledReminders(req: any, res: any) {
+  try {
+    const config = getLineConfig();
+    const body = req.body || {};
+    const forceRun = body.force === true;
+
+    if (!serverDb || !config.lineAccessToken || config.lineAccessToken.length < 50) {
+      return sendJson(res, 200, {
+        success: false,
+        sentCount: 0,
+        reason: 'Firestore หรือ LINE Access Token ยังไม่พร้อมใช้งาน',
+      });
+    }
+
+    const todayStr = getDateNDaysAway(0);
+    const in1DayStr = getDateNDaysAway(1);
+    const in3DaysStr = getDateNDaysAway(3);
+
+    const [usersSnap, shiftsSnap, annSnap] = await Promise.all([
+      getDocs(collection(serverDb, 'users')),
+      getDocs(collection(serverDb, 'shifts')),
+      getDocs(collection(serverDb, 'announcements')),
+    ]);
+
+    const allUsers = usersSnap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+    const allShifts = shiftsSnap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+    const allAnnouncements = annSnap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+
+    const userMap = new Map<string, any>();
+    allUsers.forEach((u) => userMap.set(u.id, u));
+
+    let announcementText = '';
+    if (allAnnouncements.length > 0) {
+      const sortedAnn = allAnnouncements.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+      const topAnn = sortedAnn.slice(0, 3);
+      announcementText = topAnn
+        .map((a, idx) => `${idx + 1}. 📌 ${a.title || 'ประกาศ'}\n   ${a.content || ''}`)
+        .join('\n\n');
+    } else {
+      announcementText = '• ไม่มีประกาศใหม่ในวันนี้ สามารถเข้าดูปฏิทินในระบบได้ครับ';
+    }
+
+    const nowThai = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }));
+    const currentHour = nowThai.getHours();
+
+    const allTargets = [
+      { dateStr: todayStr, code: 'D0', label: '🚨 แจ้งเตือนเวรของคุณวันนี้!', targetHourRange: [7, 11] },
+      { dateStr: in1DayStr, code: 'D1', label: '🌙 แจ้งเตือนเวรวันพรุ่งนี้ (อีก 1 วัน)!', targetHourRange: [18, 23] },
+      { dateStr: in3DaysStr, code: 'D3', label: '📅 แจ้งเตือนเวรล่วงหน้าอีก 3 วัน!', targetHourRange: [11, 15] },
+    ];
+
+    const reminderTargets = forceRun
+      ? allTargets
+      : allTargets.filter((t) => currentHour >= t.targetHourRange[0] && currentHour <= t.targetHourRange[1]);
+
+    let sentCount = 0;
+    const results: string[] = [];
+
+    for (const target of reminderTargets) {
+      const targetShifts = allShifts.filter((s) => s.date === target.dateStr);
+
+      for (const shift of targetShifts) {
+        const assignedUserIds = new Set<string>();
+
+        if (shift.type === 'bathing' && shift.userId) {
+          assignedUserIds.add(shift.userId);
+        } else if (shift.type === 'daily') {
+          if (shift.morningUserId) assignedUserIds.add(shift.morningUserId);
+          if (shift.eveningUserId) assignedUserIds.add(shift.eveningUserId);
+          if (shift.userId) assignedUserIds.add(shift.userId);
+        }
+
+        for (const userId of assignedUserIds) {
+          const userObj = userMap.get(userId);
+          if (!userObj || !userObj.lineUserId) continue;
+
+          const logKey = `${userObj.id}_${target.dateStr}_${target.code}`;
+          if (!forceRun && sentRemindersLog.has(logKey)) {
+            continue;
+          }
+
+          let partText = 'เวรปฏิบัติหน้าที่';
+          if (shift.type === 'bathing') {
+            partText = '🛁 เวรอาบน้ำดูแลน้องหมา';
+          } else if (shift.morningUserId === userId && shift.eveningUserId === userId) {
+            partText = '☀️🌙 ทั้งเวรเช้าและเวรเย็น';
+          } else if (shift.morningUserId === userId) {
+            partText = '☀️ เวรเช้า';
+          } else if (shift.eveningUserId === userId) {
+            partText = '🌙 เวรเย็น';
+          }
+
+          const thaiDate = formatThaiDateDisplay(target.dateStr);
+          const userName = userObj.nickname || userObj.name || 'คุณสมาชิก';
+
+          let msg = `🐶 [BojoiDuty] ${target.label}\n\n`;
+          msg += `สวัสดีครับคุณ ${userName}\n`;
+          msg += `📌 คุณมีเวรในวันที่: ${thaiDate}\n`;
+          msg += `⏰ รายละเอียด: ${partText}\n`;
+
+          if (shift.notes) {
+            msg += `📝 โน้ตเพิ่มเติม: ${shift.notes}\n`;
+          }
+
+          if (target.code === 'D0') {
+            msg += `\n━━━━━━━━━━━━━━━\n📢 [ประกาศ & ข่าวสารสำคัญประจำวันนี้]:\n${announcementText}\n━━━━━━━━━━━━━━━\n`;
+          }
+
+          msg += `\n✨ สู้ ๆ นะครับ น้องหมารออยู่! 🐾`;
+
+          try {
+            const pushRes = await fetch('https://api.line.me/v2/bot/message/push', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                Authorization: `Bearer ${config.lineAccessToken}`,
+              },
+              body: JSON.stringify({
+                to: userObj.lineUserId,
+                messages: [{ type: 'text', text: msg, quickReply: getLineQuickReplyItems() }],
+              }),
+            });
+
+            if (pushRes.ok) {
+              sentRemindersLog.add(logKey);
+              sentCount++;
+              results.push(`ส่งแจ้งเตือน ${target.code} ถึง ${userName} (${target.dateStr}) สำเร็จ`);
+            }
+          } catch (pushErr: any) {
+            console.warn(`[Scheduled Push Error]: ${logKey}`, pushErr.message);
+          }
+        }
+      }
+    }
+
+    return sendJson(res, 200, { success: true, sentCount, results });
+  } catch (err: any) {
+    return sendJson(res, 200, { success: false, error: err.message, sentCount: 0 });
+  }
+}
