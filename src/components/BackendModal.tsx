@@ -27,10 +27,13 @@ import {
   Cloud,
   ShieldCheck,
   Globe,
+  QrCode,
+  MessageSquare,
 } from 'lucide-react';
 import { AVAILABLE_COLORS, AVAILABLE_ICONS } from '../data/initialData';
 import { getShiftMorningUserId, getShiftEveningUserId } from '../utils/shiftUtils';
 import { getApiUrl } from '../utils/apiUtils';
+import { LINE_OA_INFO } from '../utils/lineAuthUtils';
 
 interface BackendModalProps {
   isOpen: boolean;
@@ -67,7 +70,7 @@ export const BackendModal: React.FC<BackendModalProps> = ({
   const [activeTab, setActiveTab] = useState<'duty_assign' | 'monthly_unlock' | 'bathing' | 'members' | 'fair_auto' | 'line_guide'>('duty_assign');
 
   // Line Guide & Test Push State
-  const [lineGuideSubTab, setLineGuideSubTab] = useState<'callback' | 'webhook' | 'guide' | 'test'>('callback');
+  const [lineGuideSubTab, setLineGuideSubTab] = useState<'callback' | 'webhook' | 'guide' | 'friend' | 'test'>('callback');
   const [testLineUserId, setTestLineUserId] = useState('');
   const [testResult, setTestResult] = useState<{ success: boolean; msg: string } | null>(null);
   const [isTesting, setIsTesting] = useState(false);
@@ -1279,6 +1282,17 @@ export const BackendModal: React.FC<BackendModalProps> = ({
                   <span>วิธีสร้าง Bot LINE OA</span>
                 </button>
                 <button
+                  onClick={() => setLineGuideSubTab('friend')}
+                  className={`py-2 px-3 font-bold rounded-t-xl transition-all cursor-pointer flex items-center gap-1.5 border-b-2 ${
+                    lineGuideSubTab === 'friend'
+                      ? 'bg-white text-neutral-950 border-[#06C755] shadow-xs'
+                      : 'text-neutral-500 hover:text-neutral-900 border-transparent'
+                  }`}
+                >
+                  <MessageSquare className="w-3.5 h-3.5 text-[#06C755]" />
+                  <span>บอท & QR Code เพิ่มเพื่อน</span>
+                </button>
+                <button
                   onClick={() => setLineGuideSubTab('test')}
                   className={`py-2 px-3 font-bold rounded-t-xl transition-all cursor-pointer flex items-center gap-1.5 border-b-2 ${
                     lineGuideSubTab === 'test'
@@ -1360,6 +1374,30 @@ export const BackendModal: React.FC<BackendModalProps> = ({
                           <li>มองที่แถบด้านบนสุด ถัดจากชื่อ Channel จะมีปุ่มสถานะสีเทา/เหลืองเขียนว่า <strong>"Developing"</strong></li>
                           <li>คลิกที่ปุ่มนั้นแล้วกดเปลี่ยนเป็น <strong>"Published" (เผยแพร่)</strong></li>
                           <li>เสร็จสิ้น! เมื่อสถานะเปลี่ยนเป็น <strong>Published</strong> เพื่อนทุกคนจะสามารถกดล็อกอินผ่าน LINE ได้ทันที ไม่ติดข้อความ error 400 อีกต่อไปครับ 🎉</li>
+                        </ol>
+                      </div>
+                    </div>
+
+                    {/* HOW TO LINK OA FOR AUTOMATIC ADD FRIEND ON LOGIN */}
+                    <div className="p-4 rounded-xl bg-emerald-50 border-2 border-emerald-400 space-y-2.5 text-emerald-950 shadow-xs">
+                      <div className="flex items-center gap-2">
+                        <MessageSquare className="w-5 h-5 text-[#06C755] shrink-0" />
+                        <h4 className="font-bold text-xs text-emerald-950">
+                          วิธีตั้งค่าให้ LINE Login เด้งหน้า "เพิ่มเพื่อน LINE OA" ทันทีที่เพื่อนกด Login
+                        </h4>
+                      </div>
+                      <div className="text-[11px] space-y-1.5 text-emerald-900 leading-relaxed bg-white/90 p-3 rounded-lg border border-emerald-200">
+                        <p>
+                          ระบบได้กำหนดพารามิเตอร์ <strong>bot_prompt=aggressive</strong> ไว้ในโค้ดแล้ว เพื่อให้แอป LINE เด้งหน้าจอเพิ่มเพื่อนทันทีเมื่อผู้ใช้ล็อกอิน
+                        </p>
+                        <p className="pt-1">
+                          <strong>เพื่อให้ฟังก์ชันนี้ทำงานบน LINE ต้องผูก LINE Login เข้ากับ Official Account ในคอนโซล:</strong>
+                        </p>
+                        <ol className="list-decimal pl-5 space-y-1 text-neutral-800 font-medium">
+                          <li>เปิดหน้า <a href="https://developers.line.biz/console/" target="_blank" rel="noopener noreferrer" className="text-emerald-700 underline font-bold">LINE Developers Console</a> แล้วเลือก Channel <strong>LINE Login</strong> ของคุณ</li>
+                          <li>เลือกแท็บ <strong>"LINE Official Account"</strong> (หรือดูที่หัวข้อ Linked OA)</li>
+                          <li>กดปุ่ม <strong>"Link"</strong> แล้วเลือกบัญชีบอท <strong>BojoiDuty (@090puwgd)</strong> แล้วกดบันทึก</li>
+                          <li>เสร็จสิ้น! เมื่อเพื่อนกดปุ่ม <strong>Login LINE</strong> ระบบ LINE จะเปิดหน้าจอให้กด <strong>"เพิ่มเพื่อน" (Add Friend)</strong> โดยอัตโนมัติทันทีครับ 🎉</li>
                         </ol>
                       </div>
                     </div>
@@ -1476,6 +1514,60 @@ export const BackendModal: React.FC<BackendModalProps> = ({
                         ตั้งค่า Channel Access Token (long-lived) และเปิดใช้งาน Webhook ให้เรียบร้อย
                       </p>
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {lineGuideSubTab === 'friend' && (
+                <div className="space-y-4 pt-2">
+                  <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-900 space-y-1">
+                    <h4 className="font-bold flex items-center gap-1.5 text-xs">
+                      <MessageSquare className="w-4 h-4 text-[#06C755]" />
+                      <span>ข้อมูล LINE Official Account สำหรับเพื่อนแอดรับแจ้งเตือน</span>
+                    </h4>
+                    <p className="text-[11px] text-emerald-800 leading-relaxed">
+                      เพื่อให้ระบบสามารถส่งข้อความแจ้งเตือนเวรเข้าสู่แอป LINE ของเพื่อนแต่ละคนได้ เพื่อนต้องทำการเพิ่มเพื่อนกับบอท LINE OA ด้านล่างนี้ก่อน
+                    </p>
+                  </div>
+
+                  <div className="p-5 rounded-2xl bg-white border border-neutral-200 shadow-sm flex flex-col items-center text-center space-y-4">
+                    <div className="bg-white p-3 rounded-2xl border-2 border-[#06C755] shadow-md">
+                      <img
+                        src={LINE_OA_INFO.qrCodeUrl}
+                        alt={`QR Code ${LINE_OA_INFO.displayName}`}
+                        className="w-48 h-48 object-contain"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-100 text-emerald-800 text-xs font-black">
+                        <span>บอท: {LINE_OA_INFO.displayName}</span>
+                      </div>
+                      <div className="flex items-center justify-center gap-2 pt-1">
+                        <span className="font-mono text-sm font-black text-neutral-900 bg-neutral-100 px-3 py-1 rounded-xl border border-neutral-300">
+                          {LINE_OA_INFO.basicId}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => copyToClipboard(LINE_OA_INFO.basicId)}
+                          className="px-3 py-1 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-bold transition-all cursor-pointer flex items-center gap-1"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>คัดลอก ID</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    <a
+                      href={LINE_OA_INFO.addFriendUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="w-full max-w-sm py-3 px-5 rounded-2xl bg-[#06C755] hover:bg-[#00B900] active:scale-98 text-white font-black text-sm shadow-md transition-all cursor-pointer flex items-center justify-center gap-2 border border-emerald-600"
+                    >
+                      <MessageSquare className="w-4 h-4 fill-white" />
+                      <span>เปิดหน้าเพิ่มเพื่อน LINE OA (คลิกเพื่อแอด)</span>
+                      <ExternalLink className="w-4 h-4 text-emerald-100" />
+                    </a>
                   </div>
                 </div>
               )}

@@ -11,8 +11,11 @@ import { AuthModal } from './components/AuthModal';
 import { DeviceVerificationModal } from './components/DeviceVerificationModal';
 import { LineCallbackHandler } from './components/LineCallbackHandler';
 import { LineProfileSetupModal } from './components/LineProfileSetupModal';
+import { LineFriendModal } from './components/LineFriendModal';
+import { useDuty } from './context/DutyContext';
 
 function MainApp() {
+  const { isLineFriendModalOpen, closeLineFriendModal, currentUser } = useDuty();
   const [isBackendOpen, setIsBackendOpen] = useState(false);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [isSwapModalOpen, setIsSwapModalOpen] = useState(false);
@@ -105,6 +108,12 @@ function MainApp() {
         prefillFromShiftPart={swapPrefill.fromShiftPart}
         prefillToUserId={swapPrefill.toUserId}
         prefillToDate={swapPrefill.toDate}
+      />
+
+      <LineFriendModal
+        isOpen={isLineFriendModalOpen}
+        onClose={closeLineFriendModal}
+        userName={currentUser?.nickname || currentUser?.name || currentUser?.username}
       />
     </div>
   );

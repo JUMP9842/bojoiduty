@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 
 export const UpcomingDutyAlert: React.FC = () => {
-  const { currentUser, shifts } = useDuty();
+  const { currentUser, shifts, openLineFriendModal } = useDuty();
 
   const [isSending, setIsSending] = useState(false);
   const [notificationStatus, setNotificationStatus] = useState<{
@@ -215,6 +215,16 @@ export const UpcomingDutyAlert: React.FC = () => {
                 <span>ยังไม่ได้ใส่ LINE User ID (ไปตั้งค่าได้ที่เมนูโปรไฟล์)</span>
               </span>
             )}
+
+            <button
+              type="button"
+              onClick={openLineFriendModal}
+              className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white text-[10px] font-black shadow-xs transition-all cursor-pointer"
+              title="ดู QR Code และกดเพิ่มเพื่อน LINE OA สำหรับรับการแจ้งเตือน"
+            >
+              <MessageSquare className="w-3 h-3 fill-white" />
+              <span>➕ เพิ่มเพื่อน LINE OA (@090puwgd)</span>
+            </button>
           </div>
 
           <h3 className="text-sm sm:text-base font-extrabold text-neutral-900 tracking-tight flex items-center gap-2">
@@ -298,13 +308,22 @@ export const UpcomingDutyAlert: React.FC = () => {
               : 'bg-red-50 text-red-700 border border-red-200'
           }`}
         >
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             {notificationStatus.type === 'success' ? (
               <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
             ) : (
               <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
             )}
             <span>{notificationStatus.msg}</span>
+            {notificationStatus.type === 'error' && (
+              <button
+                type="button"
+                onClick={openLineFriendModal}
+                className="px-2 py-0.5 rounded-md bg-red-600 hover:bg-red-700 text-white text-[11px] font-black cursor-pointer shadow-xs inline-flex items-center gap-1"
+              >
+                <span>➕ เพิ่มเพื่อน LINE OA ที่นี่</span>
+              </button>
+            )}
           </div>
 
           <button

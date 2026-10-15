@@ -1,5 +1,12 @@
 import { getApiUrl, safeFetchJson } from './apiUtils';
 
+export const LINE_OA_INFO = {
+  basicId: '@090puwgd',
+  displayName: 'BojoiDuty',
+  addFriendUrl: 'https://line.me/R/ti/p/@090puwgd',
+  qrCodeUrl: 'https://qr-official.line.me/gs/M_090puwgd_GW.png',
+};
+
 /**
  * Returns the active LINE OAuth Callback URL dynamically.
  * Prioritizes the current domain (e.g. Vercel public domain https://xxx.vercel.app/api/auth/line/callback)
@@ -52,6 +59,7 @@ export const loginWithLinePopup = async (_arg1?: any, _arg2?: any) => {
         redirect_uri: redirectUri,
         state,
         scope: 'profile openid',
+        bot_prompt: 'aggressive',
       });
       loginUrl = `https://access.line.me/oauth2/v2.1/authorize?${params.toString()}`;
     }

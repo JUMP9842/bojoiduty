@@ -5,12 +5,17 @@ import { getApiUrl, safeFetchJson } from '../utils/apiUtils';
 import { getActiveLineCallbackUrl } from '../utils/lineAuthUtils';
 
 export const LineCallbackHandler: React.FC = () => {
-  const { loginWithLine } = useDuty();
+  const { loginWithLine, openLineFriendModal } = useDuty();
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [message, setMessage] = useState<string>('');
   const [userName, setUserName] = useState<string>('');
 
-  const handleProfileSuccess = async (profile: { lineUserId: string; displayName?: string; pictureUrl?: string }) => {
+  const handleProfileSuccess = async (profile: {
+    lineUserId: string;
+    displayName?: string;
+    pictureUrl?: string;
+    isFriend?: boolean;
+  }) => {
     try {
       setStatus('loading');
       setMessage('กำลังประมวลผลข้อมูลสมาชิก LINE...');
@@ -24,6 +29,11 @@ export const LineCallbackHandler: React.FC = () => {
         setStatus('success');
         setUserName(res.user.name || profile.displayName || 'สมาชิก');
         setMessage(`เข้าสู่ระบบผ่าน LINE สำเร็จ! ยินดีต้อนรับคุณ ${res.user.name || profile.displayName}`);
+
+        // If user is not yet friends with the official account, prompt Add Friend modal
+        if (profile.isFriend === false) {
+          openLineFriendModal();
+        }
 
         setTimeout(() => {
           setStatus('idle');
@@ -154,6 +164,7 @@ export const LineCallbackHandler: React.FC = () => {
             lineUserId: data.lineUserId,
             displayName: data.displayName || 'LINE User',
             pictureUrl: data.pictureUrl,
+            isFriend: data.isFriend,
           };
 
           // Clean URL parameters cleanly

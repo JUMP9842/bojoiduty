@@ -85,7 +85,11 @@ const DEFAULT_LINE_CONFIG = {
   lineAccessToken:
     'KuXbOznb4aCQvDid2OyJ8F4+k3o221q6owdzubhHzw0hNexdEEw+3bYMMY4EhgjA/UQ6WvBR5/Zyy1WgjZwITGugy5rnBqMnkBBpqJY4NGVHmd1wfImEstyXPUV3blruSEEwn+ywp8PHBBIk0smvYgdB04t89/1O/w1cDnyilFU=',
   liffId: '',
-  publicSiteUrl: '', // e.g. https://your-project.vercel.app
+  publicSiteUrl: 'https://bojoiduty.vercel.app',
+  basicId: '@090puwgd',
+  botDisplayName: 'BojoiDuty',
+  addFriendUrl: 'https://line.me/R/ti/p/@090puwgd',
+  qrCodeUrl: 'https://qr-official.line.me/gs/M_090puwgd_GW.png',
 };
 
 let lineConfig = {
@@ -94,6 +98,10 @@ let lineConfig = {
   lineAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN || DEFAULT_LINE_CONFIG.lineAccessToken,
   liffId: process.env.VITE_LINE_LIFF_ID || DEFAULT_LINE_CONFIG.liffId,
   publicSiteUrl: process.env.PUBLIC_SITE_URL || DEFAULT_LINE_CONFIG.publicSiteUrl || 'https://bojoiduty.vercel.app',
+  basicId: process.env.LINE_BASIC_ID || DEFAULT_LINE_CONFIG.basicId,
+  botDisplayName: process.env.LINE_BOT_DISPLAY_NAME || DEFAULT_LINE_CONFIG.botDisplayName,
+  addFriendUrl: DEFAULT_LINE_CONFIG.addFriendUrl,
+  qrCodeUrl: DEFAULT_LINE_CONFIG.qrCodeUrl,
 };
 
 // Automatic Webhook URL Sync Function (PUT https://api.line.me/v2/bot/channel/webhook/endpoint)
@@ -159,6 +167,10 @@ app.get(['/api/line/config', '/line/config'], (req, res) => {
     lineChannelId: lineConfig.lineChannelId,
     liffId: lineConfig.liffId,
     publicSiteUrl: lineConfig.publicSiteUrl || '',
+    basicId: lineConfig.basicId || '@090puwgd',
+    botDisplayName: lineConfig.botDisplayName || 'BojoiDuty',
+    addFriendUrl: lineConfig.addFriendUrl || 'https://line.me/R/ti/p/@090puwgd',
+    qrCodeUrl: lineConfig.qrCodeUrl || 'https://qr-official.line.me/gs/M_090puwgd_GW.png',
     webhookUrl: tunnelStatus.webhookUrl,
     tunnelUrl: tunnelStatus.url,
     tunnelActive: tunnelStatus.active,
@@ -179,13 +191,19 @@ app.get(['/api/line/tunnel-status', '/line/tunnel-status'], (req, res) => {
 
 // API: Update LINE OA Config
 app.post(['/api/line/config', '/line/config'], async (req, res) => {
-  const { lineChannelId, lineChannelSecret, lineAccessToken, liffId, publicSiteUrl } = req.body;
+  const { lineChannelId, lineChannelSecret, lineAccessToken, liffId, publicSiteUrl, basicId, botDisplayName } = req.body;
 
   if (lineChannelId !== undefined) lineConfig.lineChannelId = lineChannelId.trim();
   if (lineChannelSecret !== undefined) lineConfig.lineChannelSecret = lineChannelSecret.trim();
   if (lineAccessToken !== undefined) lineConfig.lineAccessToken = lineAccessToken.trim();
   if (liffId !== undefined) lineConfig.liffId = liffId.trim();
   if (publicSiteUrl !== undefined) lineConfig.publicSiteUrl = publicSiteUrl.trim().replace(/\/$/, '');
+  if (basicId !== undefined) {
+    lineConfig.basicId = basicId.trim();
+    lineConfig.addFriendUrl = `https://line.me/R/ti/p/${encodeURIComponent(lineConfig.basicId)}`;
+    lineConfig.qrCodeUrl = `https://qr-official.line.me/gs/M_${lineConfig.basicId.replace(/^@/, '')}_GW.png`;
+  }
+  if (botDisplayName !== undefined) lineConfig.botDisplayName = botDisplayName.trim();
 
   // Auto sync webhook URL to LINE Console
   const serverHost = `${req.protocol}://${req.get('host')}`;
@@ -199,6 +217,10 @@ app.post(['/api/line/config', '/line/config'], async (req, res) => {
       hasChannelSecret: !!lineConfig.lineChannelSecret,
       hasAccessToken: !!lineConfig.lineAccessToken,
       publicSiteUrl: lineConfig.publicSiteUrl,
+      basicId: lineConfig.basicId,
+      botDisplayName: lineConfig.botDisplayName,
+      addFriendUrl: lineConfig.addFriendUrl,
+      qrCodeUrl: lineConfig.qrCodeUrl,
     },
   });
 });
@@ -236,12 +258,23 @@ app.get(['/api/line/login-url', '/line/login-url'], (req, res) => {
     redirect_uri: redirectUri,
     state,
     scope: 'profile openid',
+    bot_prompt: 'aggressive',
   });
 
   const loginUrl = `https://access.line.me/oauth2/v2.1/authorize?${params.toString()}`;
   const liffUrl = lineConfig.liffId ? `https://liff.line.me/${lineConfig.liffId}` : null;
 
-  res.json({ loginUrl, liffUrl, state, redirectUri, publicOrigin: callbackBaseOrigin });
+  res.json({
+    loginUrl,
+    liffUrl,
+    state,
+    redirectUri,
+    publicOrigin: callbackBaseOrigin,
+    basicId: lineConfig.basicId || '@090puwgd',
+    botDisplayName: lineConfig.botDisplayName || 'BojoiDuty',
+    addFriendUrl: lineConfig.addFriendUrl || 'https://line.me/R/ti/p/@090puwgd',
+    qrCodeUrl: lineConfig.qrCodeUrl || 'https://qr-official.line.me/gs/M_090puwgd_GW.png',
+  });
 });
 
 // API: LINE Login OAuth Callback handler
@@ -360,11 +393,27 @@ async function handleLineOAuthCallback(req: express.Request, res: express.Respon
     }
 
     const profileData = await profileResponse.json();
+
+    // Check Friendship Status (whether user has added the LINE OA as a friend)
+    let isFriend = false;
+    try {
+      const friendshipRes = await fetch('https://api.line.me/friendship/v1/status', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (friendshipRes.ok) {
+        const friendshipData = await friendshipRes.json();
+        isFriend = !!friendshipData.friendFlag;
+      }
+    } catch (e) {
+      console.warn('[LINE Friendship Check Notice]:', e);
+    }
+
     const profile = {
       lineUserId: profileData.userId,
       displayName: profileData.displayName,
       pictureUrl: profileData.pictureUrl,
       statusMessage: profileData.statusMessage,
+      isFriend,
     };
 
     if (req.method === 'POST') {

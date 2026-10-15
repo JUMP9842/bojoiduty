@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import {
   ActivityLog,
   Announcement,
@@ -105,6 +105,9 @@ interface DutyContextType {
   setPendingLineProfile: (profile: { lineUserId: string; displayName: string; pictureUrl?: string } | null) => void;
   completeLineRegistration: (data: { displayName: string; icon: string; color: string }) => Promise<User | null>;
   cancelPendingLineProfile: () => void;
+  isLineFriendModalOpen: boolean;
+  openLineFriendModal: () => void;
+  closeLineFriendModal: () => void;
   sendLinePushNotification: (targetUserId: string, messageText: string) => Promise<boolean>;
   register: (username: string, password: string, color: string, icon: string) => { success: boolean; error?: string };
   logout: () => void;
@@ -196,6 +199,15 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [calendarTasks, setCalendarTasks] = useState<CalendarTaskNote[]>([]);
   const [isFirebaseSynced, setIsFirebaseSynced] = useState<boolean>(false);
   const [pendingLineProfile, setPendingLineProfile] = useState<{ lineUserId: string; displayName: string; pictureUrl?: string } | null>(null);
+  const [isLineFriendModalOpen, setIsLineFriendModalOpen] = useState<boolean>(false);
+
+  const openLineFriendModal = useCallback(() => {
+    setIsLineFriendModalOpen(true);
+  }, []);
+
+  const closeLineFriendModal = useCallback(() => {
+    setIsLineFriendModalOpen(false);
+  }, []);
 
   // Sync current user ID to localStorage
   useEffect(() => {
@@ -1414,6 +1426,9 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setPendingLineProfile,
         completeLineRegistration,
         cancelPendingLineProfile,
+        isLineFriendModalOpen,
+        openLineFriendModal,
+        closeLineFriendModal,
         sendLinePushNotification,
         register,
         logout,

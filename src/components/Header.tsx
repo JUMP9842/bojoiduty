@@ -12,7 +12,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenBackend,
   onOpenAuth,
 }) => {
-  const { currentUser, logout } = useDuty();
+  const { currentUser, logout, openLineFriendModal } = useDuty();
 
   const handleLineClick = () => {
     triggerLineLogin(onOpenAuth);
@@ -32,6 +32,18 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* User Auth & Actions */}
         <div className="flex items-center gap-2 sm:gap-3">
+          {/* Add LINE OA Button */}
+          <button
+            type="button"
+            onClick={openLineFriendModal}
+            className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-extrabold shadow-2xs transition-all cursor-pointer hover:border-[#06C755]"
+            title="กดเพื่อดู QR Code และเพิ่มเพื่อน LINE Official Account (@090puwgd) สำหรับรับแจ้งเตือน"
+          >
+            <MessageSquare className="w-3.5 h-3.5 fill-[#06C755] text-[#06C755]" />
+            <span className="hidden sm:inline">เพิ่มเพื่อน</span>
+            <span className="text-emerald-700 font-black">LINE OA</span>
+          </button>
+
           {currentUser ? (
             /* Logged-in User Badge & Actions */
             <div className="flex items-center bg-[#FFF8EE] p-1 rounded-xl border border-[#FFC067]/70 shadow-xs">

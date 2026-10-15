@@ -15,7 +15,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onClose,
   defaultMode = 'login',
 }) => {
-  const { login, register, currentUser, updateUser, users } = useDuty();
+  const { login, register, currentUser, updateUser, users, openLineFriendModal } = useDuty();
   const [mode, setMode] = useState<'login' | 'register' | 'edit_profile'>(defaultMode);
 
   const [username, setUsername] = useState('');
@@ -70,12 +70,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     } else if (mode === 'register') {
       const res = register(username.trim(), password.trim(), selectedColor, selectedIcon);
       if (res.success) {
-        setSuccessMsg('สร้างรหัสผ่าน LINE OA สำเร็จ! เข้าสู่ระบบเรียบร้อยแล้ว');
+        setSuccessMsg('สมัครสมาชิกสำเร็จ! เข้าสู่ระบบเรียบร้อยแล้ว');
         setTimeout(() => {
           onClose();
-        }, 1000);
+          openLineFriendModal();
+        }, 800);
       } else {
-        setError(res.error || 'ไม่สามารถลงทะเบียน LINE OA ได้');
+        setError(res.error || 'ไม่สามารถลงทะเบียนได้');
       }
     } else if (mode === 'edit_profile') {
       if (!currentUser) return;
