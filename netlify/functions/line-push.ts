@@ -18,6 +18,10 @@ export const handler = async (event: any) => {
   if (event.httpMethod !== 'POST') {
     return {
       statusCode: 405,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify({ success: false, error: 'Method Not Allowed' }),
     };
   }
@@ -32,7 +36,7 @@ export const handler = async (event: any) => {
       return {
         statusCode: 400,
         headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-        body: JSON.stringify({ success: false, error: 'Missing target LINE User ID (to/targetUserId)' }),
+        body: JSON.stringify({ success: false, error: 'Missing target LINE User ID (to / targetUserId / lineUserId)' }),
       };
     }
 

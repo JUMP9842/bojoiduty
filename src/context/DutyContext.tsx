@@ -491,11 +491,27 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
         messages: [{ type: 'text', text: messageText }],
       };
 
-      let res = await fetch(getApiUrl('/api/line-push'), {
+      let res = await fetch('/api/line-push', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       }).catch(() => null);
+
+      if (!res || !res.ok) {
+        res = await fetch('/.netlify/functions/line-push', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }).catch(() => null);
+      }
+
+      if (!res || !res.ok) {
+        res = await fetch(getApiUrl('/api/line-push'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }).catch(() => null);
+      }
 
       if (!res || !res.ok) {
         res = await fetch(getApiUrl('/api/line/push-notification'), {
@@ -505,14 +521,6 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }).catch(() => null);
       }
 
-      if (!res || !res.ok) {
-        const fallbackUrl = 'https://ais-dev-olsgx3yczrx7ghc5qkwxao-603131036827.asia-southeast1.run.app/api/line-push';
-        res = await fetch(fallbackUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        }).catch(() => null);
-      }
 
       const data = res ? await res.json().catch(() => null) : null;
       const httpStatus = res ? res.status : 0;
