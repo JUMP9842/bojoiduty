@@ -360,10 +360,6 @@ export function handleLineConfig(req: any, res: any) {
   });
 }
 
-// Initialize Firestore for Vercel / Express serverless calls
-import { initializeApp, getApps } from 'firebase/app';
-import { getFirestore, collection, getDocs, doc, getDoc } from 'firebase/firestore';
-
 const FALLBACK_FIREBASE_CONFIG = {
   projectId: 'feisty-quasar-q53bd',
   appId: '1:388800385483:web:6cf3b76992d27ecb89a64e',
@@ -374,13 +370,24 @@ const FALLBACK_FIREBASE_CONFIG = {
   messagingSenderId: '388800385483',
 };
 
-let serverDb: any = null;
-try {
-  const existingApps = getApps();
-  const fApp = existingApps.find((a) => a.name === 'server-app') || initializeApp(FALLBACK_FIREBASE_CONFIG, 'server-app');
-  serverDb = getFirestore(fApp, FALLBACK_FIREBASE_CONFIG.firestoreDatabaseId);
-} catch (e: any) {
-  console.warn('[Shared Firestore Init Notice]:', e.message);
+let serverDbInstance: any = null;
+let isDbInitAttempted = false;
+
+async function getServerDb() {
+  if (serverDbInstance) return serverDbInstance;
+  if (isDbInitAttempted) return null;
+  isDbInitAttempted = true;
+  try {
+    const { initializeApp, getApps } = await import('firebase/app');
+    const { getFirestore } = await import('firebase/firestore');
+    const existingApps = getApps();
+    const fApp = existingApps.find((a) => a.name === 'server-app') || initializeApp(FALLBACK_FIREBASE_CONFIG, 'server-app');
+    serverDbInstance = getFirestore(fApp, FALLBACK_FIREBASE_CONFIG.firestoreDatabaseId);
+    return serverDbInstance;
+  } catch (e: any) {
+    console.warn('[Lazy Shared Firestore Init Notice]:', e.message);
+    return null;
+  }
 }
 
 export function getLineQuickReplyItems() {
@@ -418,12 +425,14 @@ async function resolveLineUserIdFromTarget(targetUserId: string): Promise<{ line
     return { lineUserId: cleanTarget, userName: cleanTarget };
   }
 
-  if (!serverDb) {
+  const db = await getServerDb();
+  if (!db) {
     return { lineUserId: null, userName: cleanTarget, error: 'ระบบเชื่อมต่อฐานข้อมูล Firestore ไม่พร้อมใช้งาน' };
   }
 
   try {
-    const usersSnap = await getDocs(collection(serverDb, 'users'));
+    const { collection, getDocs } = await import('firebase/firestore');
+    const usersSnap = await getDocs(collection(db, 'users'));
     const allUsers = usersSnap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
 
     const queryClean = cleanTarget.toLowerCase();
@@ -603,7 +612,8 @@ export async function handleLineTriggerScheduledReminders(req: any, res: any) {
     const body = req.body || {};
     const forceRun = body.force === true;
 
-    if (!serverDb || !config.lineAccessToken || config.lineAccessToken.length < 50) {
+    const db = await getServerDb();
+    if (!db || !config.lineAccessToken || config.lineAccessToken.length < 50) {
       return sendJson(res, 200, {
         success: false,
         sentCount: 0,
@@ -611,14 +621,16 @@ export async function handleLineTriggerScheduledReminders(req: any, res: any) {
       });
     }
 
+    const { collection, getDocs } = await import('firebase/firestore');
+
     const todayStr = getDateNDaysAway(0);
     const in1DayStr = getDateNDaysAway(1);
     const in3DaysStr = getDateNDaysAway(3);
 
     const [usersSnap, shiftsSnap, annSnap] = await Promise.all([
-      getDocs(collection(serverDb, 'users')),
-      getDocs(collection(serverDb, 'shifts')),
-      getDocs(collection(serverDb, 'announcements')),
+      getDocs(collection(db, 'users')),
+      getDocs(collection(db, 'shifts')),
+      getDocs(collection(db, 'announcements')),
     ]);
 
     const allUsers = usersSnap.docs.map((d: any) => ({ id: d.id, ...d.data() }));

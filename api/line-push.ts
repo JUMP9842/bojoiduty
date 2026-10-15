@@ -5,7 +5,7 @@ const DEFAULT_LINE_ACCESS_TOKEN =
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   if (req.method === 'OPTIONS') {
@@ -13,34 +13,53 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   if (req.method !== 'POST') {
-    return res.status(405).json({ success: false, error: 'Method Not Allowed' });
+    return res.status(200).json({ success: false, error: 'Method Not Allowed' });
   }
 
   try {
     const body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
 
-    const to = (body.to || body.userId || body.lineUserId || body.targetUserId || '').trim();
-    const messageText = body.messages?.[0]?.text || body.message || body.messageText || body.text || 'คุณมีแจ้งเตือนเวรใหม่';
+    const to = (
+      body.to ||
+      body.userId ||
+      body.lineUserId ||
+      body.targetUserId ||
+      ''
+    ).trim();
+
+    const rawMessage = body.messages ?? body.message ?? body.messageText ?? body.text;
 
     const token = (
+      body.token ||
+      body.channelAccessToken ||
+      body.lineAccessToken ||
       process.env.LINE_CHANNEL_ACCESS_TOKEN ||
       process.env.VITE_LINE_CHANNEL_ACCESS_TOKEN ||
-      body.token ||
       DEFAULT_LINE_ACCESS_TOKEN
     ).trim();
 
     if (!token) {
       return res.status(200).json({
         success: false,
-        error: 'ยังไม่ได้ตั้งค่า LINE_CHANNEL_ACCESS_TOKEN บน Vercel Environment Variables'
+        error: 'ไม่พบ LINE Channel Access Token'
       });
     }
 
     if (!to) {
       return res.status(200).json({
         success: false,
-        error: 'ไม่พบ LINE User ID ของผู้รับ'
+        error: 'ไม่พบ LINE User ID ของผู้รับ (to หรือ userId)'
       });
+    }
+
+    let messages: any[];
+    if (Array.isArray(rawMessage)) {
+      messages = rawMessage;
+    } else if (typeof rawMessage === 'object' && rawMessage !== null && rawMessage.type) {
+      messages = [rawMessage];
+    } else {
+      const textVal = rawMessage !== undefined && rawMessage !== null ? String(rawMessage) : '🐶 [BojoiDuty] คุณมีแจ้งเตือนเวรใหม่';
+      messages = [{ type: 'text', text: textVal }];
     }
 
     const lineRes = await fetch('https://api.line.me/v2/bot/message/push', {
@@ -51,27 +70,37 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       },
       body: JSON.stringify({
         to: to,
-        messages: [{ type: 'text', text: messageText }]
+        messages: messages
       })
     });
 
-    const data: any = await lineRes.json().catch(() => ({}));
+    const resText = await lineRes.text().catch(() => '');
+    let resData: any = {};
+    try {
+      resData = resText ? JSON.parse(resText) : {};
+    } catch {
+      resData = { text: resText };
+    }
 
     if (!lineRes.ok) {
+      const errMsg = resData.message || resData.error || resText || `LINE API Error (${lineRes.status})`;
       return res.status(200).json({
         success: false,
-        error: `LINE API Error: ${data.message || lineRes.statusText || 'Unknown error'}`
+        error: `เกิดข้อผิดพลาดจาก LINE Messaging API: ${errMsg}`,
+        details: resData
       });
     }
 
     return res.status(200).json({
       success: true,
-      message: 'ส่ง LINE สำเร็จ'
+      message: 'ส่งการแจ้งเตือน LINE สำเร็จ',
+      targetUserId: to,
+      data: resData
     });
   } catch (err: any) {
     return res.status(200).json({
       success: false,
-      error: `Server Crash: ${err?.message || String(err)}`
+      error: `Server Handler Error: ${err?.message || String(err)}`
     });
   }
 }

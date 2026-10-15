@@ -1,4 +1,4 @@
-import { handleLineOAuthCallback, handleLineLoginUrl, handleLineConfig, sendJson } from './_shared.js';
+import { handleLineOAuthCallback, handleLineLoginUrl, handleLineConfig, sendJson } from './_shared';
 
 export default async function handler(req: any, res: any) {
   const url = req.url || '';
