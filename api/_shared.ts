@@ -135,8 +135,7 @@ export async function handleLineOAuthCallback(req: any, res: any) {
 
     const config = getLineConfig();
     if (!tokenRedirectUri) {
-      const callbackBase = config.publicSiteUrl || clientOrigin;
-      tokenRedirectUri = `${callbackBase.replace(/\/$/, '')}/api/auth/line/callback`;
+      tokenRedirectUri = 'https://bojoiduty.vercel.app/api/auth/line/callback';
     }
 
     // Handle OAuth error or missing code
@@ -322,8 +321,7 @@ export function handleLineLoginUrl(req: any, res: any) {
     let clientOrigin = (query.client_origin as string) || (req?.headers?.origin as string) || serverOrigin;
     clientOrigin = clientOrigin.replace(/\/$/, '');
 
-    const callbackBaseOrigin = (config.publicSiteUrl || 'https://bojoiduty.vercel.app').replace(/\/$/, '');
-    const redirectUri = `${callbackBaseOrigin}/api/auth/line/callback`;
+    const redirectUri = 'https://bojoiduty.vercel.app/api/auth/line/callback';
 
     if (!config.lineChannelId) {
       return sendJson(res, 200, {
@@ -356,7 +354,7 @@ export function handleLineLoginUrl(req: any, res: any) {
       liffUrl,
       state,
       redirectUri,
-      publicOrigin: callbackBaseOrigin,
+      publicOrigin: 'https://bojoiduty.vercel.app',
     });
   } catch (err: any) {
     return sendJson(res, 200, { success: false, error: err?.message || 'Failed to generate login URL' });
@@ -444,6 +442,38 @@ async function fetchCollectionFromFirestoreRest(collectionName: string): Promise
   } catch (e) {
     console.warn(`[Firestore REST ${collectionName} Warning]:`, e);
     return [];
+  }
+}
+
+// Atomic lock and persistence helper in Firestore to prevent race conditions and duplicate sends across cold starts
+async function acquireReminderLockFirestore(logKey: string): Promise<boolean> {
+  if (!logKey) return false;
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIRESTORE_DATABASE_ID}/documents/reminder_logs?documentId=${encodeURIComponent(logKey)}`;
+    const body = {
+      fields: {
+        logKey: { stringValue: logKey },
+        sentAt: { stringValue: new Date().toISOString() },
+      },
+    };
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (res.status === 200 || res.status === 201) {
+      sentRemindersLog.add(logKey);
+      return true; // Lock acquired!
+    }
+
+    // 409 Conflict ALREADY_EXISTS -> Lock already held, skip sending
+    return false;
+  } catch (e) {
+    console.warn('[Firestore Reminder Lock Error]:', e);
+    if (sentRemindersLog.has(logKey)) return false;
+    sentRemindersLog.add(logKey);
+    return true;
   }
 }
 
@@ -646,7 +676,7 @@ export async function handleLinePushNotification(req: any, res: any) {
   }
 }
 
-// Memory log for sent reminders
+// Memory log fallback for sent reminders
 const sentRemindersLog = new Set<string>();
 
 function getDateNDaysAway(n: number): string {
@@ -658,12 +688,34 @@ function getDateNDaysAway(n: number): string {
   return `${y}-${m}-${d}`;
 }
 
-// 5. Scheduled Reminders Handler
+// 5. Secure Scheduled Reminders Handler with Cron Authentication, Pre-locking, and Single Combined Message per User
 export async function handleLineTriggerScheduledReminders(req: any, res: any) {
   try {
     const config = getLineConfig();
     const body = req?.body || {};
-    const forceRun = body.force === true;
+
+    // 1. Enforce CRON_SECRET or Vercel Cron Header Verification
+    const authHeader = (req?.headers?.authorization || req?.headers?.['authorization'] || '').trim();
+    const bearerToken = authHeader.replace(/^Bearer\s+/i, '').trim();
+
+    const isVercelCron = !!req?.headers?.['x-vercel-cron'];
+    const expectedCronSecret = (process.env.CRON_SECRET || 'bojoiduty_cron_secret_2026').trim();
+    const expectedChannelSecret = (process.env.LINE_CHANNEL_SECRET || config.lineChannelSecret || '').trim();
+
+    const isAuthorized =
+      isVercelCron ||
+      (bearerToken && (bearerToken === expectedCronSecret || bearerToken === expectedChannelSecret)) ||
+      (body.cronSecret && body.cronSecret === expectedCronSecret);
+
+    if (!isAuthorized) {
+      return sendJson(res, 200, {
+        success: false,
+        sentCount: 0,
+        error: 'Unauthorized: CRON_SECRET is required to trigger scheduled reminders',
+      });
+    }
+
+    const forceRun = body.force === true && isAuthorized;
 
     if (!config.lineAccessToken || config.lineAccessToken.length < 50) {
       return sendJson(res, 200, {
@@ -700,6 +752,7 @@ export async function handleLineTriggerScheduledReminders(req: any, res: any) {
     const nowThai = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }));
     const currentHour = nowThai.getHours();
 
+    // Tight target windows
     const allTargets = [
       { dateStr: todayStr, code: 'D0', label: '🚨 แจ้งเตือนเวรของคุณวันนี้!', targetHourRange: [7, 11] },
       { dateStr: in1DayStr, code: 'D1', label: '🌙 แจ้งเตือนเวรวันพรุ่งนี้ (อีก 1 วัน)!', targetHourRange: [18, 23] },
@@ -710,8 +763,15 @@ export async function handleLineTriggerScheduledReminders(req: any, res: any) {
       ? allTargets
       : allTargets.filter((t) => currentHour >= t.targetHourRange[0] && currentHour <= t.targetHourRange[1]);
 
-    let sentCount = 0;
-    const results: string[] = [];
+    // Group duty notifications by user ID
+    const userRemindersMap = new Map<string, Array<{
+      code: string;
+      dateStr: string;
+      label: string;
+      shift: any;
+      partText: string;
+      logKey: string;
+    }>>();
 
     for (const target of reminderTargets) {
       const targetShifts = allShifts.filter((s) => s.date === target.dateStr);
@@ -731,10 +791,7 @@ export async function handleLineTriggerScheduledReminders(req: any, res: any) {
           const userObj = userMap.get(userId);
           if (!userObj || !userObj.lineUserId) continue;
 
-          const logKey = `${userObj.id}_${target.dateStr}_${target.code}`;
-          if (!forceRun && sentRemindersLog.has(logKey)) {
-            continue;
-          }
+          const logKey = `rem_${target.code}_${target.dateStr}_${userId}`;
 
           let partText = 'เวรปฏิบัติหน้าที่';
           if (shift.type === 'bathing') {
@@ -747,46 +804,91 @@ export async function handleLineTriggerScheduledReminders(req: any, res: any) {
             partText = '🌙 เวรเย็น';
           }
 
-          const thaiDate = formatThaiDateDisplay(target.dateStr);
-          const userName = userObj.nickname || userObj.name || 'คุณสมาชิก';
-
-          let msg = `🐶 [BojoiDuty] ${target.label}\n\n`;
-          msg += `สวัสดีครับคุณ ${userName}\n`;
-          msg += `📌 คุณมีเวรในวันที่: ${thaiDate}\n`;
-          msg += `⏰ รายละเอียด: ${partText}\n`;
-
-          if (shift.notes) {
-            msg += `📝 โน้ตเพิ่มเติม: ${shift.notes}\n`;
+          if (!userRemindersMap.has(userId)) {
+            userRemindersMap.set(userId, []);
           }
 
-          if (target.code === 'D0') {
-            msg += `\n━━━━━━━━━━━━━━━\n📢 [ประกาศ & ข่าวสารสำคัญประจำวันนี้]:\n${announcementText}\n━━━━━━━━━━━━━━━\n`;
-          }
+          userRemindersMap.get(userId)!.push({
+            code: target.code,
+            dateStr: target.dateStr,
+            label: target.label,
+            shift,
+            partText,
+            logKey,
+          });
+        }
+      }
+    }
 
-          msg += `\n✨ สู้ ๆ นะครับ น้องหมารออยู่! 🐾`;
+    let sentCount = 0;
+    const results: string[] = [];
 
-          try {
-            const pushRes = await fetch('https://api.line.me/v2/bot/message/push', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${config.lineAccessToken}`,
-              },
-              body: JSON.stringify({
-                to: userObj.lineUserId,
-                messages: [{ type: 'text', text: msg, quickReply: getLineQuickReplyItems() }],
-              }),
-            });
+    // Combine multiple reminders per user into 1 single message and pre-lock in Firestore
+    for (const [userId, items] of userRemindersMap.entries()) {
+      const userObj = userMap.get(userId);
+      if (!userObj || !userObj.lineUserId) continue;
 
-            if (pushRes.ok) {
-              sentRemindersLog.add(logKey);
-              sentCount++;
-              results.push(`ส่งแจ้งเตือน ${target.code} ถึง ${userName} (${target.dateStr}) สำเร็จ`);
-            }
-          } catch (pushErr: any) {
-            console.warn(`[Scheduled Push Error]: ${logKey}`, pushErr?.message);
+      const itemsToSend: typeof items = [];
+      for (const item of items) {
+        if (forceRun) {
+          itemsToSend.push(item);
+        } else {
+          // Pre-lock in Firestore to prevent race conditions and duplicate sends
+          const locked = await acquireReminderLockFirestore(item.logKey);
+          if (locked) {
+            itemsToSend.push(item);
           }
         }
+      }
+
+      if (itemsToSend.length === 0) continue;
+
+      const userName = userObj.nickname || userObj.name || 'คุณสมาชิก';
+      const hasD0 = itemsToSend.some((i) => i.code === 'D0');
+
+      let msg = `🐶 [BojoiDuty] แจ้งเตือนตารางเวรดูแลน้องหมา\n\n`;
+      msg += `สวัสดีครับคุณ ${userName}\n`;
+      msg += `📌 คุณมีเวรปฏิบัติหน้าที่ดังนี้:\n\n`;
+
+      itemsToSend.forEach((item, idx) => {
+        const thaiDate = formatThaiDateDisplay(item.dateStr);
+        msg += `${idx + 1}. ${item.label}\n`;
+        msg += `   📅 วันที่: ${thaiDate}\n`;
+        msg += `   ⏰ รายละเอียด: ${item.partText}\n`;
+        if (item.shift.notes) {
+          msg += `   📝 โน้ต: ${item.shift.notes}\n`;
+        }
+        msg += `\n`;
+      });
+
+      if (hasD0) {
+        msg += `━━━━━━━━━━━━━━━\n📢 [ประกาศ & ข่าวสารสำคัญประจำวันนี้]:\n${announcementText}\n━━━━━━━━━━━━━━━\n\n`;
+      }
+
+      msg += `✨ สู้ ๆ นะครับ น้องหมารออยู่! 🐾`;
+
+      try {
+        const pushRes = await fetch('https://api.line.me/v2/bot/message/push', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${config.lineAccessToken}`,
+          },
+          body: JSON.stringify({
+            to: userObj.lineUserId,
+            messages: [{ type: 'text', text: msg.trim(), quickReply: getLineQuickReplyItems() }],
+          }),
+        });
+
+        if (pushRes.ok) {
+          sentCount++;
+          results.push(`ส่งแจ้งเตือนรวม (${itemsToSend.length} รายการ) ถึง ${userName} สำเร็จ`);
+        } else {
+          const errData = await pushRes.json().catch(() => ({}));
+          console.warn(`[Scheduled Combined Push Error for ${userName}]:`, errData);
+        }
+      } catch (pushErr: any) {
+        console.warn(`[Scheduled Push Exception for ${userName}]:`, pushErr?.message);
       }
     }
 

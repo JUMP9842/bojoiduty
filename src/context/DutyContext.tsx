@@ -339,28 +339,8 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     setIsFirebaseSynced(true);
 
-    // Auto-check and trigger scheduled reminders (throttled once per 30 minutes in sessionStorage)
-    const checkScheduledReminders = async () => {
-      try {
-        const lastCheck = sessionStorage.getItem('last_reminders_trigger');
-        const now = Date.now();
-        if (!lastCheck || now - Number(lastCheck) > 1800000) {
-          sessionStorage.setItem('last_reminders_trigger', String(now));
-          await fetch(getApiUrl('/api/line/trigger-scheduled-reminders'), {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ force: false }),
-          }).catch(() => {});
-        }
-      } catch (err) {
-        console.warn('Scheduled reminders trigger notice:', err);
-      }
-    };
-    const remTimer = setTimeout(checkScheduledReminders, 4000);
-
     return () => {
       isMounted = false;
-      clearTimeout(remTimer);
       unsubUsers();
       unsubShifts();
       unsubTasks();
@@ -716,16 +696,6 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setBookingSettings(newSettings);
     safeSetDoc(doc(db, 'settings', 'booking_settings'), newSettings).catch(console.warn);
     addLog('unlock_schedule_update', `[Admin] กำหนดวันเปิดจองเดือน ${monthKey}: วันที่ ${openDate} เวลา ${openTime || '12:00'} น.`);
-
-    // Broadcast notification to all users connected to LINE
-    users.forEach((u) => {
-      if (u.lineUserId) {
-        sendLinePushNotification(
-          u.lineUserId,
-          `📢 [BojoiDuty] แอดมินได้ประกาศวันเปิดจองเวรประจำเดือน ${monthKey}!\n📅 วันที่เปิดจอง: ${openDate} เวลา ${openTime || '12:00'} น.`
-        );
-      }
-    });
   };
 
   const deleteMonthUnlockSchedule = async (monthKey: string) => {

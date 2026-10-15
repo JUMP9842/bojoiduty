@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import { initializeApp, getApps } from 'firebase/app';
 import { getFirestore, collection, getDocs, doc, setDoc } from 'firebase/firestore';
-import { handleLinePushNotification } from './api/_shared.js';
+import { handleLinePushNotification, handleLineTriggerScheduledReminders } from './api/_shared.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1182,11 +1182,8 @@ async function checkAndSendScheduledReminders(forceRun: boolean = false) {
   }
 }
 
-// API: Trigger Scheduled Reminders (D-3, D-1, Today + Announcements)
-app.post(['/api/line/trigger-scheduled-reminders', '/line/trigger-scheduled-reminders'], async (req, res) => {
-  const force = req.body?.force === true;
-  const result = await checkAndSendScheduledReminders(force);
-  res.json(result);
+app.all(['/api/line/trigger-scheduled-reminders', '/line/trigger-scheduled-reminders'], express.json(), async (req, res) => {
+  return handleLineTriggerScheduledReminders(req, res);
 });
 
 // Start Express server with Vite in Development mode
@@ -1213,9 +1210,6 @@ async function startServer() {
   const server = app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
     setTimeout(() => startTunnel(), 1000);
-    // Run scheduled reminders check once on boot & every 1 hour
-    setTimeout(() => checkAndSendScheduledReminders(), 10000);
-    setInterval(() => checkAndSendScheduledReminders(), 3600000);
   });
 
   server.on('error', (err: any) => {
@@ -1225,8 +1219,6 @@ async function startServer() {
       const altServer = app.listen(altPort, () => {
         console.log(`🚀 Server running on alternative port ${altPort}`);
         setTimeout(() => startTunnel(), 1000);
-        setTimeout(() => checkAndSendScheduledReminders(), 10000);
-        setInterval(() => checkAndSendScheduledReminders(), 3600000);
       });
       altServer.on('error', (err2: any) => {
         console.error('Alternative port also in use or failed:', err2);
