@@ -501,51 +501,65 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
 
       let res: Response | null = null;
+      let data: any = null;
 
-      res = await fetch('/api/line-push', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payload),
-      }).catch(() => null);
-
-      if (!res || !res.ok) {
-        res = await fetch('/.netlify/functions/line-push', {
+      try {
+        res = await fetch('/api/line-push', {
           method: 'POST',
           headers,
           body: JSON.stringify(payload),
-        }).catch(() => null);
+        });
+        if (res) {
+          data = await res.json().catch(() => null);
+        }
+      } catch (e) {
+        console.warn('[LINE Push] Local /api/line-push failed:', e);
       }
 
-      if (!res || !res.ok) {
-        res = await fetch(getApiUrl('/api/line-push'), {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(payload),
-        }).catch(() => null);
+      // If primary failed or returned server/network error, try netlify/functions fallback
+      if ((!res || !res.ok) && (!data || data.success === false)) {
+        try {
+          const fallbackRes = await fetch('/.netlify/functions/line-push', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(payload),
+          });
+          const fallbackData = await fallbackRes.json().catch(() => null);
+          if (fallbackRes.ok && fallbackData?.success) {
+            res = fallbackRes;
+            data = fallbackData;
+          } else if (fallbackData && fallbackData.error) {
+            // Keep detailed error if returned
+            res = fallbackRes;
+            data = fallbackData;
+          }
+        } catch (e) {
+          console.warn('[LINE Push] Netlify function fallback failed:', e);
+        }
       }
 
-      if (!res || !res.ok) {
-        res = await fetch(getApiUrl('/api/line/push-notification'), {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(payload),
-        }).catch(() => null);
-      }
-
-      const data = res ? await res.json().catch(() => null) : null;
       const httpStatus = res ? res.status : 0;
+      const isSuccess = data ? data.success !== false : (res ? res.ok : false);
 
-      if (res && res.ok && data?.success !== false) {
+      if (res && res.ok && isSuccess) {
         console.log(`[LINE Push Success]: Delivered to ${userName} (${lineUserId})`);
         if (showDiagnosticAlert) {
           window.alert(`ส่งแจ้งเตือน LINE สำเร็จไปยัง ${userName} (LINE ID: ${lineUserId})`);
         }
         return true;
       } else {
-        const errMsg = data?.error || (res ? res.statusText : 'Network Exception or Proxy Unreachable');
-        console.error(`[LINE Push API Error] Status: ${httpStatus} | Error:`, errMsg);
+        const rawErr =
+          data?.error ||
+          data?.message ||
+          data?.details?.message ||
+          data?.details?.error ||
+          (res && res.statusText ? res.statusText : null) ||
+          'Unknown Server Error';
+        const errorMessage = typeof rawErr === 'string' && rawErr.trim().length > 0 ? rawErr.trim() : 'Server Error (No error details returned)';
+
+        console.error(`[LINE Push API Error] Status: ${httpStatus} | Error:`, errorMessage, data);
         if (showDiagnosticAlert) {
-          window.alert(`เกิดข้อผิดพลาดในการส่ง LINE (Status ${httpStatus}): ${errMsg}`);
+          window.alert(`เกิดข้อผิดพลาดในการส่ง LINE (Status ${httpStatus}): ${errorMessage}`);
         }
         return false;
       }

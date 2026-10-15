@@ -1,16 +1,33 @@
-const DEFAULT_LINE_ACCESS_TOKEN =
+const DEFAULT_LINE_ACCESS_TOKEN = (
   process.env.LINE_CHANNEL_ACCESS_TOKEN ||
-  'KuXbOznb4aCQvDid2OyJ8F4+k3o221q6owdzubhHzw0hNexdEEw+3bYMMY4EhgjA/UQ6WvBR5/Zyy1WgjZwITGugy5rnBqMnkBBpqJY4NGVHmd1wfImEstyXPUV3blruSEEwn+ywp8PHBBIk0smvYgdB04t89/1O/w1cDnyilFU=';
+  'KuXbOznb4aCQvDid2OyJ8F4+k3o221q6owdzubhHzw0hNexdEEw+3bYMMY4EhgjA/UQ6WvBR5/Zyy1WgjZwITGugy5rnBqMnkBBpqJY4NGVHmd1wfImEstyXPUV3blruSEEwn+ywp8PHBBIk0smvYgdB04t89/1O/w1cDnyilFU='
+).trim();
+
+function parseBody(rawBody: any): any {
+  if (!rawBody) return {};
+  if (typeof rawBody === 'object') return rawBody;
+  if (typeof rawBody === 'string') {
+    try {
+      return JSON.parse(rawBody);
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
 
 export const handler = async (event: any) => {
+  const headers = {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  };
+
   if (event.httpMethod === 'OPTIONS') {
     return {
       statusCode: 200,
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
-      },
+      headers,
       body: 'OK',
     };
   }
@@ -18,25 +35,40 @@ export const handler = async (event: any) => {
   if (event.httpMethod !== 'POST') {
     return {
       statusCode: 405,
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify({ success: false, error: 'Method Not Allowed' }),
     };
   }
 
   try {
-    const body = JSON.parse(event.body || '{}');
+    const body = parseBody(event.body);
     const recipientLineUserId = body.to || body.targetUserId || body.lineUserId;
     const messageText = body.messageText;
     const customMessages = body.messages;
 
+    const authHeader = event.headers?.authorization || event.headers?.Authorization || '';
+    const headerToken = authHeader.replace(/^Bearer\s+/i, '').trim();
+    const token = (body.lineAccessToken || headerToken || DEFAULT_LINE_ACCESS_TOKEN || '').trim();
+
+    if (!token) {
+      return {
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({
+          success: false,
+          error: 'LINE_CHANNEL_ACCESS_TOKEN is missing or undefined',
+        }),
+      };
+    }
+
     if (!recipientLineUserId) {
       return {
-        statusCode: 400,
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-        body: JSON.stringify({ success: false, error: 'Missing target LINE User ID (to / targetUserId / lineUserId)' }),
+        statusCode: 200,
+        headers,
+        body: JSON.stringify({
+          success: false,
+          error: 'Missing target LINE User ID (to / targetUserId / lineUserId)',
+        }),
       };
     }
 
@@ -53,7 +85,7 @@ export const handler = async (event: any) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${DEFAULT_LINE_ACCESS_TOKEN}`,
+        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({
         to: recipientLineUserId,
@@ -65,12 +97,13 @@ export const handler = async (event: any) => {
 
     if (!res.ok) {
       console.error(`[Netlify Line Push Error] Status: ${res.status}`, JSON.stringify(resData));
+      const errMsg = resData.message || resData.error || `LINE API Error (${res.status})`;
       return {
-        statusCode: res.status,
-        headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+        statusCode: 200,
+        headers,
         body: JSON.stringify({
           success: false,
-          error: resData.message || `LINE API Error (${res.status})`,
+          error: errMsg,
           details: resData,
         }),
       };
@@ -78,7 +111,7 @@ export const handler = async (event: any) => {
 
     return {
       statusCode: 200,
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
+      headers,
       body: JSON.stringify({
         success: true,
         message: 'Push notification sent successfully via Netlify Function',
@@ -88,9 +121,13 @@ export const handler = async (event: any) => {
   } catch (err: any) {
     console.error('[Netlify Line Push Exception]:', err);
     return {
-      statusCode: 500,
-      headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' },
-      body: JSON.stringify({ success: false, error: err.message || 'Internal Server Error' }),
+      statusCode: 200,
+      headers,
+      body: JSON.stringify({
+        success: false,
+        error: err.message || 'Internal Server Error in Netlify Function',
+        details: String(err.stack || err),
+      }),
     };
   }
 };

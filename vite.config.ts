@@ -3,9 +3,10 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import { defineConfig } from 'vite';
 
-const LINE_CHANNEL_ACCESS_TOKEN =
+const LINE_CHANNEL_ACCESS_TOKEN = (
   process.env.LINE_CHANNEL_ACCESS_TOKEN ||
-  'KuXbOznb4aCQvDid2OyJ8F4+k3o221q6owdzubhHzw0hNexdEEw+3bYMMY4EhgjA/UQ6WvBR5/Zyy1WgjZwITGugy5rnBqMnkBBpqJY4NGVHmd1wfImEstyXPUV3blruSEEwn+ywp8PHBBIk0smvYgdB04t89/1O/w1cDnyilFU=';
+  'KuXbOznb4aCQvDid2OyJ8F4+k3o221q6owdzubhHzw0hNexdEEw+3bYMMY4EhgjA/UQ6WvBR5/Zyy1WgjZwITGugy5rnBqMnkBBpqJY4NGVHmd1wfImEstyXPUV3blruSEEwn+ywp8PHBBIk0smvYgdB04t89/1O/w1cDnyilFU='
+).trim();
 
 export default defineConfig(() => {
   return {
@@ -25,10 +26,12 @@ export default defineConfig(() => {
         '/api/line-push': {
           target: 'https://api.line.me',
           changeOrigin: true,
-          rewrite: (path) => path.replace(/^\/api\/line-push/, '/v2/bot/message/push'),
+          rewrite: (p) => p.replace(/^\/api\/line-push/, '/v2/bot/message/push'),
           configure: (proxy) => {
             proxy.on('proxyReq', (proxyReq) => {
-              proxyReq.setHeader('Authorization', `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`);
+              if (LINE_CHANNEL_ACCESS_TOKEN) {
+                proxyReq.setHeader('Authorization', `Bearer ${LINE_CHANNEL_ACCESS_TOKEN}`);
+              }
               proxyReq.setHeader('Content-Type', 'application/json');
             });
           },

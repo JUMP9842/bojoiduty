@@ -939,6 +939,19 @@ async function resolveLineUserIdFromTarget(targetUserId: string): Promise<{ line
   }
 }
 
+function parseRequestBody(req: express.Request): any {
+  if (!req.body) return {};
+  if (typeof req.body === 'object') return req.body;
+  if (typeof req.body === 'string') {
+    try {
+      return JSON.parse(req.body);
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
 // API: Send Push Notification via Messaging API
 app.all(['/api/line/push-notification', '/line/push-notification', '/api/line-push', '/line-push', '/.netlify/functions/line-push'], async (req, res) => {
   if (req.method === 'OPTIONS') {
@@ -946,7 +959,7 @@ app.all(['/api/line/push-notification', '/line/push-notification', '/api/line-pu
   }
 
   try {
-    const body = req.body || {};
+    const body = parseRequestBody(req);
     const target = body.targetUserId || body.to || body.lineUserId;
     const messageText = body.messageText;
     const customMessages = body.messages;
@@ -955,17 +968,19 @@ app.all(['/api/line/push-notification', '/line/push-notification', '/api/line-pu
     // Token resolution priority: body > header > server config > process.env > default
     const authHeader = req.headers['authorization'] || '';
     const headerToken = authHeader.replace(/^Bearer\s+/i, '').trim();
-    const token =
+    const rawToken =
       body.lineAccessToken ||
       headerToken ||
       lineConfig.lineAccessToken ||
       process.env.LINE_CHANNEL_ACCESS_TOKEN ||
-      DEFAULT_LINE_CONFIG.lineAccessToken;
+      DEFAULT_LINE_CONFIG.lineAccessToken ||
+      '';
+    const token = typeof rawToken === 'string' ? rawToken.trim() : '';
 
     if (!token) {
       return res.status(200).json({
         success: false,
-        error: 'ยังไม่ได้ตั้งค่า LINE Messaging API Channel Access Token ในส่วนผู้ดูแลระบบ',
+        error: 'LINE_CHANNEL_ACCESS_TOKEN is missing or undefined (ยังไม่ได้ตั้งค่า Token)',
       });
     }
 
@@ -1023,23 +1038,25 @@ app.all(['/api/line/push-notification', '/line/push-notification', '/api/line-pu
       }),
     });
 
+    const errJson = await pushResponse.json().catch(() => ({}));
+
     if (!pushResponse.ok) {
-      const errJson = await pushResponse.json().catch(() => ({}));
       console.error(`[LINE Push API Error] Status: ${pushResponse.status} | Response:`, JSON.stringify(errJson));
-      const errMsg = errJson?.message || JSON.stringify(errJson);
+      const errMsg = errJson?.message || errJson?.error || JSON.stringify(errJson);
       let userFriendlyNotice = `LINE API Error (${pushResponse.status}): ${errMsg}`;
-      if (errMsg.includes('property') && errMsg.includes('to')) {
+      if (typeof errMsg === 'string' && errMsg.includes('property') && errMsg.includes('to')) {
         userFriendlyNotice += ' (ผู้รับยังไม่ได้กดแอดเพื่อน LINE OA @090puwgd หรือบล็อกบอทอยู่)';
       }
       return res.status(200).json({
         success: false,
         error: userFriendlyNotice,
+        details: errJson,
       });
     }
 
     console.log(`[LINE Push API Success]: Message delivered to ${recipientLineUserId}`);
 
-    return res.json({
+    return res.status(200).json({
       success: true,
       message: `ส่งการแจ้งเตือนถึงคุณ ${userName} เข้า LINE สำเร็จ!`,
       targetUserId: recipientLineUserId,
@@ -1049,7 +1066,8 @@ app.all(['/api/line/push-notification', '/line/push-notification', '/api/line-pu
     console.error('[Push Notification Error]: Exception occurred:', err.message || err);
     return res.status(200).json({
       success: false,
-      error: err.message || 'Failed to send LINE push notification',
+      error: err.message || String(err) || 'Failed to send LINE push notification',
+      details: String(err.stack || err),
     });
   }
 });
