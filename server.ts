@@ -953,70 +953,17 @@ function parseRequestBody(req: express.Request): any {
   return {};
 }
 
-app.post(['/api/line/push-notification', '/api/line-push'], express.json(), async (req, res) => {
+app.all(['/api/line/push-notification', '/line/push-notification', '/api/line-push', '/line-push', '/.netlify/functions/line-push'], express.json(), async (req, res) => {
+  if (req.method === 'OPTIONS') {
+    return res.status(200).send('OK');
+  }
   try {
-    const body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
-    
-    // รองรับชื่อตัวแปรทุกรูปแบบที่หน้าบ้านส่งมา
-    const rawTo = body.to || body.lineUserId || body.userId || body.targetUserId;
-    const rawMessage = body.messages || body.message || body.messageText || body.text;
-    const token = (
-      body.token || 
-      body.lineAccessToken ||
-      process.env.LINE_CHANNEL_ACCESS_TOKEN || 
-      process.env.VITE_LINE_CHANNEL_ACCESS_TOKEN || 
-      lineConfig.lineAccessToken ||
-      DEFAULT_LINE_CONFIG.lineAccessToken ||
-      ''
-    ).trim();
-
-    if (!token) {
-      return res.status(400).json({ error: 'ไม่พบค่า LINE_CHANNEL_ACCESS_TOKEN ในระบบ (.env)' });
-    }
-    if (!rawTo) {
-      return res.status(400).json({ error: 'ไม่พบรหัส LINE User ID (to) ของผู้รับ' });
-    }
-
-    let to = rawTo;
-    if (typeof rawTo === 'string' && !(rawTo.startsWith('U') && rawTo.length >= 30)) {
-      const resolved = await resolveLineUserIdFromTarget(rawTo);
-      if (resolved.lineUserId) {
-        to = resolved.lineUserId;
-      }
-    }
-
-    // จัดรูปแบบข้อความให้ตรงตามมาตรฐาน LINE Messaging API
-    const messages = Array.isArray(rawMessage)
-      ? rawMessage
-      : [{ type: 'text', text: String(rawMessage || 'แจ้งเตือนระบบเวร') }];
-
-    const lineRes = await fetch('https://api.line.me/v2/bot/message/push', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify({ to, messages })
-    });
-
-    const responseText = await lineRes.text();
-    let responseData;
-    try {
-      responseData = responseText ? JSON.parse(responseText) : {};
-    } catch {
-      responseData = { message: responseText };
-    }
-
-    if (!lineRes.ok) {
-      return res.status(lineRes.status).json({
-        error: responseData.message || `LINE API ตอบกลับสถานะ ${lineRes.status}`,
-        details: responseData
-      });
-    }
-
-    return res.status(200).json({ success: true, data: responseData });
+    return await handleLinePushNotification(req, res);
   } catch (err: any) {
-    return res.status(500).json({ error: err?.message || 'Internal Server Error' });
+    console.error('[Server Push Exception]:', err);
+    return res.status(500).json({
+      error: err?.message || 'Internal Server Error in Push Notification API',
+    });
   }
 });
 
@@ -1265,7 +1212,7 @@ async function startServer() {
 
   const server = app.listen(PORT, () => {
     console.log(`🚀 Server running on http://localhost:${PORT}`);
-    startTunnel();
+    setTimeout(() => startTunnel(), 1000);
     // Run scheduled reminders check once on boot & every 1 hour
     setTimeout(() => checkAndSendScheduledReminders(), 10000);
     setInterval(() => checkAndSendScheduledReminders(), 3600000);
@@ -1277,7 +1224,7 @@ async function startServer() {
       const altPort = Number(PORT) + 1;
       const altServer = app.listen(altPort, () => {
         console.log(`🚀 Server running on alternative port ${altPort}`);
-        startTunnel();
+        setTimeout(() => startTunnel(), 1000);
         setTimeout(() => checkAndSendScheduledReminders(), 10000);
         setInterval(() => checkAndSendScheduledReminders(), 3600000);
       });

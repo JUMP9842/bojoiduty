@@ -465,7 +465,6 @@ async function resolveLineUserIdFromTarget(targetUserId: string): Promise<{ line
 // 4. Push Notification Handler
 export async function handleLinePushNotification(req: any, res: any) {
   try {
-    const config = getLineConfig();
     let body = req.body || {};
     if (typeof body === 'string') {
       try {
@@ -473,67 +472,56 @@ export async function handleLinePushNotification(req: any, res: any) {
       } catch {}
     }
 
-    const targetUserId = body.targetUserId || body.to || body.userId || body.lineUserId;
-    const messageText = body.messageText || body.message;
-    const customMessages = body.messages;
-    const flexMessage = body.flexMessage;
+    const rawTo = (body.to || body.lineUserId || body.userId || body.targetUserId || '').trim();
+    const rawMessage = body.messages || body.message || body.messageText || body.text;
+    const config = getLineConfig();
 
-    // Token resolution priority: body > Authorization header > config > process.env > default
-    const authHeader = req.headers?.['authorization'] || req.headers?.Authorization || '';
-    const headerToken = authHeader.replace(/^Bearer\s+/i, '').trim();
-    const rawToken =
+    const token = (
       body.token ||
+      body.channelAccessToken ||
       body.lineAccessToken ||
-      headerToken ||
-      config.lineAccessToken ||
       process.env.LINE_CHANNEL_ACCESS_TOKEN ||
+      process.env.VITE_LINE_CHANNEL_ACCESS_TOKEN ||
+      config.lineAccessToken ||
       DEFAULT_LINE_CONFIG.lineAccessToken ||
-      '';
-    const token = typeof rawToken === 'string' ? rawToken.trim() : '';
+      ''
+    ).trim();
 
     if (!token) {
-      return sendJson(res, 200, {
-        success: false,
-        error: 'ยังไม่ได้ตั้งค่า LINE Messaging API Channel Access Token ในระบบ',
+      return sendJson(res, 400, {
+        error: 'ไม่พบ LINE Channel Access Token กรุณาใส่ Token ในหน้าตั้งค่า BackendModal หรือในไฟล์ .env',
       });
     }
 
-    if (token.length < 50) {
-      return sendJson(res, 200, {
-        success: false,
-        error:
-          'Channel Access Token ไม่ถูกต้อง: ต้องเป็น Long-lived Token (ขนาดยาว ~172 ตัวอักษร) จาก LINE Developers Console',
+    if (!rawTo) {
+      return sendJson(res, 400, {
+        error: 'ผู้ใช้คนนี้ยังไม่ได้ผูกบัญชี LINE OA (ไม่พบรหัส LINE User ID ที่ขึ้นต้นด้วย U)',
       });
     }
 
-    if (!targetUserId) {
-      return sendJson(res, 200, { success: false, error: 'กรุณาระบุผู้รับการแจ้งเตือน (LINE User ID, ชื่อผู้ใช้ หรือชื่อเล่น)' });
+    let recipientLineUserId = rawTo;
+    if (!(rawTo.startsWith('U') && rawTo.length >= 30)) {
+      try {
+        const resolved = await resolveLineUserIdFromTarget(rawTo);
+        if (resolved?.lineUserId) {
+          recipientLineUserId = resolved.lineUserId;
+        }
+      } catch (e) {
+        console.warn('[Shared Line Target Resolution Warning]:', e);
+      }
     }
 
-    // Resolve targetUserId to actual LINE User ID if necessary
-    const resolved = await resolveLineUserIdFromTarget(targetUserId);
-    if (!resolved.lineUserId) {
-      return sendJson(res, 200, {
-        success: false,
-        error: resolved.error || `ไม่สามารถระบุ LINE User ID ของผู้รับ "${targetUserId}" ได้`,
+    if (!recipientLineUserId || !recipientLineUserId.startsWith('U')) {
+      return sendJson(res, 400, {
+        error: 'ผู้ใช้คนนี้ยังไม่ได้ผูกบัญชี LINE OA (ไม่พบรหัส LINE User ID ที่ขึ้นต้นด้วย U)',
       });
     }
 
-    const recipientLineUserId = resolved.lineUserId;
+    const messages = Array.isArray(rawMessage)
+      ? rawMessage
+      : [{ type: 'text', text: String(rawMessage || '🐶 [BojoiDuty] คุณมีแจ้งเตือนเวรใหม่ที่ใกล้จะถึง') }];
 
-    const messages = flexMessage
-      ? [flexMessage]
-      : Array.isArray(customMessages) && customMessages.length > 0
-      ? customMessages
-      : [
-          {
-            type: 'text',
-            text: messageText || '🐶 [BojoiDuty] คุณมีแจ้งเตือนเวรใหม่ที่ใกล้จะถึง กรุณาตรวจสอบในระบบ',
-            quickReply: getLineQuickReplyItems(),
-          },
-        ];
-
-    console.log(`[LINE Push Server Dispatch] Target LINE User ID: ${recipientLineUserId} | Text: "${messageText || ''}"`);
+    console.log(`[LINE Push Direct Dispatch] Target: ${recipientLineUserId}`);
 
     const pushResponse = await fetch('https://api.line.me/v2/bot/message/push', {
       method: 'POST',
@@ -547,36 +535,32 @@ export async function handleLinePushNotification(req: any, res: any) {
       }),
     });
 
-    const errJson = await pushResponse.json().catch(() => ({}));
+    const resText = await pushResponse.text();
+    let resData: any = {};
+    try {
+      resData = resText ? JSON.parse(resText) : {};
+    } catch {
+      resData = { message: resText };
+    }
 
     if (!pushResponse.ok) {
-      console.error(`[LINE Push API Error] Status: ${pushResponse.status} | Response:`, JSON.stringify(errJson));
-      const errMsg = errJson?.message || errJson?.error || JSON.stringify(errJson);
-      let userFriendlyNotice = `LINE API Error (${pushResponse.status}): ${errMsg}`;
-      if (typeof errMsg === 'string' && errMsg.includes('property') && errMsg.includes('to')) {
-        userFriendlyNotice += ' (ผู้รับยังไม่ได้กดแอดเพื่อน LINE OA @090puwgd หรือบล็อกบอทอยู่)';
-      }
-      return sendJson(res, 200, {
-        success: false,
-        error: userFriendlyNotice,
-        details: errJson,
+      const lineError = resData.message || resData.error || resText || `LINE API ตอบกลับสถานะ ${pushResponse.status}`;
+      return sendJson(res, pushResponse.status || 400, {
+        error: lineError,
+        details: resData,
       });
     }
 
-    console.log(`[LINE Push API Success]: Message delivered to ${recipientLineUserId}`);
-
     return sendJson(res, 200, {
       success: true,
-      message: `ส่งการแจ้งเตือนถึงคุณ ${resolved.userName} เข้า LINE สำเร็จ!`,
+      message: `ส่งการแจ้งเตือนเข้า LINE สำเร็จ!`,
+      data: resData,
       targetUserId: recipientLineUserId,
-      recipientName: resolved.userName,
     });
   } catch (err: any) {
-    console.error('[Push Notification Error]: Exception occurred:', err.message || err);
-    return sendJson(res, 200, {
-      success: false,
-      error: err.message || String(err) || 'Failed to send LINE push notification',
-      details: String(err.stack || err),
+    console.error('[LINE Push Shared Exception]:', err);
+    return sendJson(res, 500, {
+      error: err?.message || String(err) || 'Internal Server Error in LINE Push Handler',
     });
   }
 }

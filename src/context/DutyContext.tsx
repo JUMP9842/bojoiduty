@@ -407,6 +407,27 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Helper to send LINE Push Notification via Messaging API (Backend Proxy - No CORS)
+  // Helper to resolve LINE token on frontend
+  const getFrontendLineToken = async (): Promise<string> => {
+    let token = (import.meta.env as any).VITE_LINE_CHANNEL_ACCESS_TOKEN || DEFAULT_LINE_ACCESS_TOKEN || '';
+    try {
+      const local = localStorage.getItem('line_channel_access_token') || localStorage.getItem('line_access_token');
+      if (local && local.trim().length > 30) {
+        token = local.trim();
+      }
+    } catch {}
+    try {
+      const cfgDoc = await getDoc(doc(db, 'settings', 'line')).catch(() => null);
+      if (cfgDoc && cfgDoc.exists()) {
+        const data = cfgDoc.data();
+        if (data.lineAccessToken && data.lineAccessToken.trim().length > 30) {
+          token = data.lineAccessToken.trim();
+        }
+      }
+    } catch {}
+    return token.trim();
+  };
+
   const sendLinePushNotification = async (
     targetUserIdOrName: string,
     messageText: string,
@@ -414,7 +435,7 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
   ): Promise<boolean> => {
     if (!targetUserIdOrName) {
       if (showDiagnosticAlert) {
-        window.alert('ไม่พบ LINE ID ของผู้ใช้ (ไม่ได้ระบุชื่อผู้ใช้หรือ ID) (ข้อมูลผู้ใช้ที่ดึงได้คือ: null)');
+        window.alert('ผู้ใช้คนนี้ยังไม่ได้ผูกบัญชี LINE OA (ไม่ได้ระบุชื่อผู้ใช้หรือ ID)');
       }
       return false;
     }
@@ -422,21 +443,22 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cleanTarget = targetUserIdOrName.trim();
     const cleanTargetLower = cleanTarget.toLowerCase();
 
-    // 1. Search in local state users comparing id, uid, lineUserId, name, nickname, username
-    let matchedUser: User | undefined = users.find((u) => {
-      const uAny = u as any;
+    // 1. Search in local state users comparing id, uid, lineUserId, lineId, line_user_id, name, nickname, username
+    let matchedUser: any = users.find((u: any) => {
       return (
         u.id === cleanTarget ||
-        uAny.uid === cleanTarget ||
+        u.uid === cleanTarget ||
         u.lineUserId === cleanTarget ||
+        u.lineId === cleanTarget ||
+        u.line_user_id === cleanTarget ||
         (u.username && u.username.toLowerCase() === cleanTargetLower) ||
         (u.name && u.name.toLowerCase() === cleanTargetLower) ||
         (u.nickname && u.nickname.toLowerCase() === cleanTargetLower)
       );
     });
 
-    // 2. If not found in state or matchedUser does not have lineUserId, fetch fresh from Firestore 'users' collection
-    if (!matchedUser || !matchedUser.lineUserId) {
+    // 2. Fetch fresh from Firestore via frontend Firebase SDK if not found
+    if (!matchedUser || (!matchedUser.lineUserId && !matchedUser.lineId && !matchedUser.line_user_id)) {
       try {
         const snap = await getDocs(collection(db, 'users'));
         const freshUsers = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as any);
@@ -445,6 +467,8 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
             u.id === cleanTarget ||
             u.uid === cleanTarget ||
             u.lineUserId === cleanTarget ||
+            u.lineId === cleanTarget ||
+            u.line_user_id === cleanTarget ||
             (u.username && u.username.toLowerCase() === cleanTargetLower) ||
             (u.name && u.name.toLowerCase() === cleanTargetLower) ||
             (u.nickname && u.nickname.toLowerCase() === cleanTargetLower) ||
@@ -455,61 +479,76 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
         });
 
         if (freshMatched) {
-          matchedUser = freshMatched as User;
+          matchedUser = freshMatched;
         }
       } catch (err) {
-        console.warn('Firestore fresh user fetch notice:', err);
+        console.warn('Frontend fresh user query notice:', err);
       }
     }
 
-    // 3. Resolve lineUserId
-    const lineUserId =
-      matchedUser?.lineUserId ||
-      (cleanTarget.startsWith('U') && cleanTarget.length >= 30 ? cleanTarget : null);
+    // 3. Resolve targetLineUserId
+    const rawLineId = matchedUser
+      ? matchedUser.lineUserId ||
+        matchedUser.lineId ||
+        matchedUser.line_user_id ||
+        (typeof matchedUser.uid === 'string' && matchedUser.uid.startsWith('U') && matchedUser.uid.length >= 30 ? matchedUser.uid : '')
+      : '';
+
+    const targetLineUserId = rawLineId || (cleanTarget.startsWith('U') && cleanTarget.length >= 30 ? cleanTarget : '');
 
     const userName = matchedUser
       ? matchedUser.nickname || matchedUser.name || matchedUser.username
       : cleanTarget;
 
-    if (!lineUserId) {
-      console.warn(`[LINE Push Diagnostic] ไม่พบ LINE ID ของผู้ใช้ ${cleanTarget}`);
+    if (!targetLineUserId || !targetLineUserId.startsWith('U')) {
+      console.warn(`[LINE Push Diagnostic] ผู้ใช้คนนี้ยังไม่ได้ผูกบัญชี LINE OA: ${cleanTarget}`);
       if (showDiagnosticAlert) {
-        window.alert(
-          `ไม่พบ LINE ID ของผู้ใช้ ${userName || cleanTarget} (ข้อมูลผู้ใช้ที่ดึงได้คือ: ${JSON.stringify(matchedUser || null)})`
-        );
+        window.alert(`ผู้ใช้คนนี้ยังไม่ได้ผูกบัญชี LINE OA (ไม่พบรหัส LINE User ID ที่ขึ้นต้นด้วย U สำหรับ ${userName || cleanTarget})`);
       }
       return false;
     }
 
-    // Requirement 4: Debug console.log before sending
-    console.log(`[LINE Push Sending] Target LINE User ID: ${lineUserId} | Message: "${messageText}"`);
+    // 4. Resolve Channel Access Token from Frontend
+    const token = await getFrontendLineToken();
 
-    // 4. Send via Server Proxy endpoint to prevent CORS
+    console.log(`[LINE Push Dispatch] Target LINE User ID: ${targetLineUserId} | Message: "${messageText}"`);
+
+    // 5. Send Payload to Backend Proxy API
     try {
       const response = await fetch(getApiUrl('/api/line/push-notification'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          to: lineUserId, // ตัวแปรที่เก็บ LINE User ID (ขึ้นต้นด้วย U...)
-          message: messageText, // ข้อความแจ้งเตือน
-          token: DEFAULT_LINE_ACCESS_TOKEN || (import.meta.env as any).VITE_LINE_CHANNEL_ACCESS_TOKEN || '' // แนบ Token จากหน้าบ้านเผื่อหลังบ้านไม่มี
-        })
+          to: targetLineUserId,
+          lineUserId: targetLineUserId,
+          userId: targetLineUserId,
+          targetUserId: targetLineUserId,
+          message: messageText,
+          messageText: messageText,
+          messages: [{ type: 'text', text: messageText }],
+          token: token,
+          channelAccessToken: token,
+        }),
       });
 
-      if (!response.ok) {
-        const errData = await response.json().catch(() => ({}));
-        const errMsg = errData.error || errData.message || response.statusText || 'Unknown Error';
-        console.error(`[LINE Push Error] Status ${response.status}:`, errMsg);
+      const rawText = await response.text().catch(() => '');
+      let jsonResponse: any = null;
+      try {
+        jsonResponse = rawText ? JSON.parse(rawText) : {};
+      } catch {}
+
+      if (!response.ok || (jsonResponse && jsonResponse.success === false)) {
+        const errorDetail = jsonResponse?.error || jsonResponse?.message || rawText || `HTTP Status ${response.status}`;
+        console.error(`[LINE Push Error] Status ${response.status}:`, errorDetail);
         if (showDiagnosticAlert) {
-          window.alert(`เกิดข้อผิดพลาดในการส่ง LINE (Status ${response.status}): ${errMsg}`);
+          window.alert(`เกิดข้อผิดพลาดในการส่ง LINE (Status ${response.status}): ${errorDetail}`);
         }
         return false;
       }
 
-      const resJson = await response.json().catch(() => ({}));
-      console.log(`[LINE Push Success]: Delivered to ${userName} (${lineUserId})`, resJson);
+      console.log(`[LINE Push Success]: Delivered to ${userName} (${targetLineUserId})`, jsonResponse || rawText);
       if (showDiagnosticAlert) {
-        window.alert(`ส่งแจ้งเตือน LINE สำเร็จไปยัง ${userName} (LINE ID: ${lineUserId})`);
+        window.alert(`ส่งแจ้งเตือน LINE สำเร็จไปยัง ${userName} (LINE ID: ${targetLineUserId})`);
       }
       return true;
     } catch (err: any) {
