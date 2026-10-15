@@ -454,7 +454,7 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const sendLinePushNotification = async (
     targetUserIdOrName: string,
     messageText: string,
-    showDiagnosticAlert: boolean = true
+    showDiagnosticAlert: boolean = false
   ): Promise<boolean> => {
     if (!targetUserIdOrName) {
       if (showDiagnosticAlert) {

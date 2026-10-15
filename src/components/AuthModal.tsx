@@ -49,13 +49,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setSuccessMsg(null);
 
     if (!username.trim() || !password.trim()) {
-      setError('กรุณากรอกชื่อบัญชี LINE OA และรหัสผ่าน');
+      setError('กรุณากรอกชื่อผู้ใช้และรหัสผ่าน');
       return;
     }
 
     if (mode === 'register') {
       if (password.trim() !== confirmPassword.trim()) {
-        setError('รหัสผ่านและยืนยันรหัสผ่าน LINE OA ไม่ตรงกัน');
+        setError('รหัสผ่านและยืนยันรหัสผ่านไม่ตรงกัน');
         return;
       }
     }
@@ -65,7 +65,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       if (res.success) {
         onClose();
       } else {
-        setError(res.error || 'ชื่อผู้ใช้ LINE OA หรือรหัสผ่านไม่ถูกต้อง');
+        setError(res.error || 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
       }
     } else if (mode === 'register') {
       const res = register(username.trim(), password.trim(), selectedColor, selectedIcon);
@@ -105,13 +105,18 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setUsername(u.username || u.name);
     setPassword(u.password || '');
     setError(null);
+    // Auto submit login for instant convenience
+    const res = login(u.username || u.name, u.password || '');
+    if (res.success) {
+      onClose();
+    }
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-neutral-900/60 backdrop-blur-xs animate-in fade-in duration-150">
-      <div className="relative w-full max-w-md rounded-2xl bg-white border-2 border-[#06C755]/40 shadow-2xl p-4 sm:p-5 overflow-hidden">
-        {/* Top Green Accent Bar for LINE OA Branding */}
-        <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-[#06C755] via-[#00B900] to-[#06C755]" />
+      <div className="relative w-full max-w-md rounded-2xl bg-white border-2 border-[#FFC067]/60 shadow-2xl p-4 sm:p-5 overflow-hidden">
+        {/* Top Accent Bar */}
+        <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-[#FFC067] via-[#06C755] to-[#FFC067]" />
 
         {/* Close Button */}
         <button
@@ -121,27 +126,28 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           <X className="w-4 h-4" />
         </button>
 
-        {/* LINE OA Header Badge */}
+        {/* Header Badge */}
         <div className="flex flex-col gap-2 mb-3 pr-6 pt-1">
           <div className="flex items-center gap-2">
-            <div className="w-7 h-7 rounded-lg bg-[#06C755] text-white flex items-center justify-center font-bold shadow-xs">
-              <MessageSquare className="w-4 h-4 fill-white" />
+            <div className="w-7 h-7 rounded-lg bg-[#FFC067] text-neutral-950 flex items-center justify-center font-bold shadow-xs">
+              🐶
             </div>
             <div>
-              <div className="flex items-center gap-1.5">
-                <span className="inline-block w-2 h-2 rounded-full bg-[#06C755] animate-pulse" />
-                <span className="text-[10px] font-bold text-[#06C755] tracking-wider uppercase">
-                  LINE Official System
-                </span>
-              </div>
               <h3 className="text-sm font-extrabold text-neutral-900">
-                {mode === 'login' ? 'Login LINE' : 'ตั้งค่าโปรไฟล์'}
+                {mode === 'login'
+                  ? 'เข้าสู่ระบบ BojoiDuty'
+                  : mode === 'register'
+                  ? 'สมัครสมาชิกผู้ใช้ใหม่'
+                  : 'ตั้งค่าโปรไฟล์ & LINE'}
               </h3>
+              <p className="text-[11px] text-neutral-500">
+                ระบบเวรดูแลน้องหมา & แจ้งเตือน LINE OA
+              </p>
             </div>
           </div>
 
           {/* Mode Tabs */}
-          <div className="flex rounded-xl bg-emerald-50/60 p-1 text-xs border border-[#06C755]/30">
+          <div className="flex rounded-xl bg-neutral-100 p-1 text-xs border border-neutral-200">
             <button
               type="button"
               onClick={() => {
@@ -151,13 +157,31 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               }}
               className={`flex-1 py-1.5 font-bold rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                 mode === 'login'
-                  ? 'bg-white text-neutral-950 shadow-xs border border-[#06C755]/50'
+                  ? 'bg-white text-neutral-950 shadow-xs border border-neutral-200'
                   : 'text-neutral-600 hover:text-neutral-950'
               }`}
             >
-              <LogIn className="w-3.5 h-3.5 text-[#06C755]" />
-              <span>Login LINE</span>
+              <LogIn className="w-3.5 h-3.5 text-[#FFC067]" />
+              <span>เข้าสู่ระบบ</span>
             </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setMode('register');
+                setError(null);
+                setSuccessMsg(null);
+              }}
+              className={`flex-1 py-1.5 font-bold rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                mode === 'register'
+                  ? 'bg-white text-neutral-950 shadow-xs border border-neutral-200'
+                  : 'text-neutral-600 hover:text-neutral-950'
+              }`}
+            >
+              <UserPlus className="w-3.5 h-3.5 text-[#06C755]" />
+              <span>สมัครสมาชิก</span>
+            </button>
+
             {currentUser && (
               <button
                 type="button"
@@ -168,23 +192,23 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 }}
                 className={`flex-1 py-1.5 font-bold rounded-lg transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
                   mode === 'edit_profile'
-                    ? 'bg-white text-neutral-950 shadow-xs border border-[#06C755]/50'
+                    ? 'bg-white text-neutral-950 shadow-xs border border-neutral-200'
                     : 'text-neutral-600 hover:text-neutral-950'
                 }`}
               >
-                <Palette className="w-3.5 h-3.5 text-[#06C755]" />
+                <Palette className="w-3.5 h-3.5 text-purple-600" />
                 <span>การตั้งค่า</span>
               </button>
             )}
           </div>
         </div>
 
-        {/* Quick Staff Account Switcher for LINE OA users */}
+        {/* Quick Staff Account Switcher */}
         {mode === 'login' && users.length > 0 && (
-          <div className="mb-3 p-2 rounded-xl bg-neutral-50 border border-neutral-200 text-xs">
-            <div className="text-[10px] font-bold text-neutral-500 mb-1 flex items-center gap-1">
-              <Sparkles className="w-3 h-3 text-[#06C755]" />
-              <span>เลือกบัญชีเจ้าหน้าที่ LINE OA ด่วน:</span>
+          <div className="mb-3 p-2.5 rounded-xl bg-amber-50/80 border border-[#FFC067]/50 text-xs">
+            <div className="text-[11px] font-bold text-amber-900 mb-1.5 flex items-center gap-1">
+              <Sparkles className="w-3.5 h-3.5 text-[#FFC067]" />
+              <span>เข้าสู่ระบบด้วยบัญชีเจ้าหน้าที่ทันที (1-Click Login):</span>
             </div>
             <div className="flex items-center gap-1.5 flex-wrap">
               {users.map((u) => (
@@ -192,7 +216,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   key={u.id}
                   type="button"
                   onClick={() => handleQuickSelectStaff(u)}
-                  className="px-2 py-0.5 rounded-lg bg-white border border-neutral-200 hover:border-[#06C755] hover:bg-emerald-50 text-[11px] font-semibold text-neutral-800 transition-all flex items-center gap-1 cursor-pointer"
+                  className="px-2.5 py-1 rounded-lg bg-white border border-[#FFC067]/40 hover:border-[#06C755] hover:bg-emerald-50 text-[11px] font-bold text-neutral-800 transition-all flex items-center gap-1 cursor-pointer shadow-2xs"
                 >
                   <span>{u.icon || '🐶'}</span>
                   <span>{u.nickname || u.name}</span>
@@ -209,13 +233,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               type="button"
               onClick={() =>
                 triggerLineLogin(() =>
-                  setError('หาก Login LINE ไม่สำเร็จ สามารถเลือกบัญชีเจ้าหน้าที่ด้านล่างได้ทันที')
+                  setError('หาก Login ผ่าน LINE ไม่สำเร็จ สามารถเลือกบัญชีเจ้าหน้าที่ด้านบนเพื่อเข้าสู่ระบบได้ทันที')
                 )
               }
               className="w-full py-2.5 px-3 rounded-xl bg-[#06C755] hover:bg-[#00B900] active:scale-98 text-white font-extrabold text-xs shadow-md hover:shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer border border-emerald-600"
             >
               <MessageSquare className="w-4 h-4 fill-white shrink-0" />
-              <span>Login LINE</span>
+              <span>Login ด้วยบัญชี LINE</span>
               <ExternalLink className="w-3.5 h-3.5 text-white/80 ml-auto" />
             </button>
           </div>
@@ -238,34 +262,34 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
           <div>
             <label className="block text-[11px] font-bold text-neutral-700 mb-1">
-              {mode === 'register' ? 'ชื่อแสดงผล / ไอดี LINE OA *' : 'ชื่อบัญชีผู้ใช้ LINE OA (Username) *'}
+              {mode === 'register' ? 'ชื่อผู้ใช้ / อีเมล *' : 'ชื่อผู้ใช้ (Username) *'}
             </label>
             <div className="relative">
               <UserIcon className="w-3.5 h-3.5 text-neutral-400 absolute left-2.5 top-2.5" />
               <input
                 type="text"
                 required
-                placeholder={mode === 'register' ? 'เช่น น้องมี่ LINE OA หรือ Preme' : 'กรอกชื่อบัญชี LINE OA...'}
+                placeholder={mode === 'register' ? 'เช่น som346ff@gmail.com หรือ Preme' : 'กรอกชื่อผู้ใช้...'}
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl bg-neutral-50 border border-neutral-200 focus:bg-white focus:border-[#06C755] focus:outline-hidden font-semibold text-neutral-900"
+                className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl bg-neutral-50 border border-neutral-200 focus:bg-white focus:border-[#FFC067] focus:outline-hidden font-semibold text-neutral-900"
               />
             </div>
           </div>
 
           <div>
             <label className="block text-[11px] font-bold text-neutral-700 mb-1">
-              {mode === 'register' ? 'สร้างรหัสผ่าน LINE OA (Create Password) *' : 'รหัสผ่าน LINE OA (Password) *'}
+              {mode === 'register' ? 'สร้างรหัสผ่าน *' : 'รหัสผ่าน (Password) *'}
             </label>
             <div className="relative">
               <Lock className="w-3.5 h-3.5 text-neutral-400 absolute left-2.5 top-2.5" />
               <input
                 type="password"
                 required
-                placeholder="กรอกรหัสผ่าน LINE OA..."
+                placeholder="กรอกรหัสผ่าน..."
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl bg-neutral-50 border border-neutral-200 focus:bg-white focus:border-[#06C755] focus:outline-hidden font-semibold text-neutral-900"
+                className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl bg-neutral-50 border border-neutral-200 focus:bg-white focus:border-[#FFC067] focus:outline-hidden font-semibold text-neutral-900"
               />
             </div>
           </div>
@@ -273,7 +297,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           {mode === 'register' && (
             <div>
               <label className="block text-[11px] font-bold text-neutral-700 mb-1">
-                ยืนยันรหัสผ่าน LINE OA (Confirm Password) *
+                ยืนยันรหัสผ่าน (Confirm Password) *
               </label>
               <div className="relative">
                 <Lock className="w-3.5 h-3.5 text-neutral-400 absolute left-2.5 top-2.5" />
@@ -283,7 +307,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   placeholder="กรอกยืนยันรหัสผ่านอีกครั้ง..."
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl bg-neutral-50 border border-neutral-200 focus:bg-white focus:border-[#06C755] focus:outline-hidden font-semibold text-neutral-900"
+                  className="w-full pl-8 pr-3 py-1.5 text-xs rounded-xl bg-neutral-50 border border-neutral-200 focus:bg-white focus:border-[#FFC067] focus:outline-hidden font-semibold text-neutral-900"
                 />
               </div>
             </div>
@@ -295,7 +319,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               {/* Color */}
               <div>
                 <label className="block text-[10px] font-bold text-neutral-600 mb-1">
-                  เลือกสีประจำตัวประจำบัญชี LINE OA
+                  เลือกสีประจำตัว
                 </label>
                 <div className="flex items-center gap-1.5 flex-wrap">
                   {AVAILABLE_COLORS.map((col) => (
@@ -304,7 +328,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       type="button"
                       onClick={() => setSelectedColor(col)}
                       className={`w-5 h-5 rounded-full border-2 transition-transform cursor-pointer ${
-                        selectedColor === col ? 'scale-125 border-neutral-900 ring-2 ring-[#06C755]' : 'border-white'
+                        selectedColor === col ? 'scale-125 border-neutral-900 ring-2 ring-[#FFC067]' : 'border-white'
                       }`}
                       style={{ backgroundColor: col }}
                     />
@@ -324,7 +348,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                       type="button"
                       onClick={() => setSelectedIcon(ic)}
                       className={`w-7 h-7 rounded-lg border text-sm flex items-center justify-center transition-all cursor-pointer ${
-                        selectedIcon === ic ? 'bg-emerald-50 text-neutral-950 border-[#06C755] shadow-xs font-bold' : 'bg-white border-neutral-200'
+                        selectedIcon === ic ? 'bg-amber-50 text-neutral-950 border-[#FFC067] shadow-xs font-bold' : 'bg-white border-neutral-200'
                       }`}
                     >
                       {ic}
@@ -335,12 +359,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             </div>
           )}
 
-          {/* LINE User ID & Notification Settings hidden under Edit Profile (Settings Menu) */}
+          {/* LINE User ID & Notification Settings under Edit Profile */}
           {mode === 'edit_profile' && (
             <div className="space-y-2.5 pt-3 border-t border-neutral-100 bg-emerald-50/40 p-3 rounded-xl border border-emerald-200/60">
               <label className="block text-xs font-extrabold text-neutral-900 flex items-center gap-1.5">
                 <MessageSquare className="w-3.5 h-3.5 text-[#06C755]" />
-                <span>การตั้งค่า LINE ของคุณ (LINE User ID & Notifications)</span>
+                <span>การตั้งค่า LINE (LINE User ID & Notifications)</span>
               </label>
 
               <div>
@@ -370,7 +394,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
           <div className="pt-2 flex items-center justify-between gap-2">
             <span className="text-[10px] text-neutral-400">
-              🟢 รองรับการเข้าใช้งาน LINE OA
+              🟢 BojoiDuty System
             </span>
 
             <div className="flex items-center gap-2">
@@ -384,17 +408,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
               <button
                 type="submit"
-                className="px-4 py-1.5 rounded-xl bg-[#06C755] hover:bg-[#00B900] active:scale-95 text-white text-xs font-extrabold shadow-md transition-all flex items-center gap-1.5 border border-emerald-600 cursor-pointer"
+                className="px-4 py-1.5 rounded-xl bg-[#FFC067] hover:bg-[#ffb347] active:scale-95 text-neutral-950 text-xs font-extrabold shadow-md transition-all flex items-center gap-1.5 border border-amber-400 cursor-pointer"
               >
                 {mode === 'login' ? (
                   <>
                     <LogIn className="w-3.5 h-3.5" />
-                    <span>เข้าสู่ระบบ LINE OA</span>
+                    <span>เข้าสู่ระบบ</span>
                   </>
                 ) : mode === 'register' ? (
                   <>
                     <UserPlus className="w-3.5 h-3.5" />
-                    <span>สร้างรหัสผ่าน LINE OA</span>
+                    <span>สมัครสมาชิก</span>
                   </>
                 ) : (
                   <>

@@ -8,15 +8,10 @@ export const LINE_OA_INFO = {
 };
 
 /**
- * Returns the active LINE OAuth Callback URL dynamically.
- * Prioritizes the current domain (e.g. Vercel public domain https://xxx.vercel.app/api/auth/line/callback)
- * or local/preview development containers.
+ * Returns the exact LINE OAuth Callback URL registered in LINE Developers Console:
+ * https://bojoiduty.vercel.app/api/auth/line/callback
  */
-export const getActiveLineCallbackUrl = (customOrigin?: string): string => {
-  if (customOrigin && !customOrigin.includes('ais-') && !customOrigin.includes('localhost')) {
-    return `${customOrigin.replace(/\/$/, '')}/api/auth/line/callback`;
-  }
-  // Canonical callback URL registered in LINE Developers Console
+export const getActiveLineCallbackUrl = (_customOrigin?: string): string => {
   return 'https://bojoiduty.vercel.app/api/auth/line/callback';
 };
 
@@ -27,17 +22,17 @@ export const getActiveLineCallbackUrl = (customOrigin?: string): string => {
  */
 export const loginWithLinePopup = async (_arg1?: any, _arg2?: any) => {
   try {
-    const clientOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+    const clientOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://bojoiduty.vercel.app';
+    const redirectUri = 'https://bojoiduty.vercel.app/api/auth/line/callback';
     const endpoint = getApiUrl(`/api/line/login-url?client_origin=${encodeURIComponent(clientOrigin)}`);
     
     const { ok, data } = await safeFetchJson(endpoint);
 
     let loginUrl = data?.loginUrl;
 
-    // If backend is unavailable (e.g. static hosting fallback), generate client-side fallback LINE login URL
+    // If backend is unavailable, generate client-side fallback LINE login URL with exact registered redirect_uri
     if (!ok || !loginUrl) {
-      const channelId = '2011986358'; // Default BojoiDuty LINE Channel ID
-      const redirectUri = getActiveLineCallbackUrl(clientOrigin);
+      const channelId = '2011986358'; // BojoiDuty LINE Channel ID
       const stateObj = {
         origin: clientOrigin,
         redirectUri,
@@ -74,12 +69,9 @@ export const loginWithLinePopup = async (_arg1?: any, _arg2?: any) => {
           window.location.href = loginUrl;
         }
       }
-    } else {
-      throw new Error('ไม่สามารถรับ URL สำหรับเข้าสู่ระบบ LINE ได้');
     }
   } catch (err: any) {
     console.error('Failed to trigger LINE login popup:', err);
-    alert('เกิดข้อผิดพลาดในการเปิดหน้า LINE Login: ' + (err.message || String(err)));
   }
 };
 

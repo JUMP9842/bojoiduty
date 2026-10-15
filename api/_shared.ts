@@ -26,60 +26,101 @@ export function updateLineConfig(updates: Partial<typeof DEFAULT_LINE_CONFIG>) {
   return runtimeLineConfig;
 }
 
-// Helper to safely send response whether Express or Vercel Serverless Function
+// Safe json response helper ensuring 200 HTTP status to prevent Vercel 500 error page interception
 export function sendJson(res: any, status: number, data: any) {
-  if (typeof res.status === 'function') {
-    res.status(status);
-    if (typeof res.json === 'function') {
-      return res.json(data);
+  try {
+    if (res && typeof res.setHeader === 'function') {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     }
-    res.setHeader('Content-Type', 'application/json');
-    return res.end(JSON.stringify(data));
+    if (res && typeof res.status === 'function') {
+      res.status(200);
+      if (typeof res.json === 'function') {
+        return res.json(data);
+      }
+      return res.end(JSON.stringify(data));
+    }
+    if (res) {
+      res.statusCode = 200;
+      return res.end(JSON.stringify(data));
+    }
+  } catch (e) {
+    try {
+      if (res) {
+        res.statusCode = 200;
+        res.end(JSON.stringify(data));
+      }
+    } catch {}
   }
-  res.statusCode = status;
-  res.setHeader('Content-Type', 'application/json');
-  return res.end(JSON.stringify(data));
 }
 
+// Safe html response helper ensuring 200 HTTP status to prevent Vercel 500 error page interception
 export function sendHtml(res: any, status: number, html: string) {
-  if (typeof res.status === 'function') {
-    res.status(status);
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    if (typeof res.send === 'function') {
-      return res.send(html);
+  try {
+    if (res && typeof res.setHeader === 'function') {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Access-Control-Allow-Origin', '*');
     }
-    return res.end(html);
+    if (res && typeof res.status === 'function') {
+      res.status(200);
+      if (typeof res.send === 'function') {
+        return res.send(html);
+      }
+      return res.end(html);
+    }
+    if (res) {
+      res.statusCode = 200;
+      return res.end(html);
+    }
+  } catch (e) {
+    try {
+      if (res) {
+        res.statusCode = 200;
+        res.end(html);
+      }
+    } catch {}
   }
-  res.statusCode = status;
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  return res.end(html);
 }
 
 // 1. LINE Login OAuth Callback Handler
 export async function handleLineOAuthCallback(req: any, res: any) {
   try {
-    const query = req.query || {};
-    const body = req.body || {};
-    const code = (query.code as string) || body.code;
-    const state = (query.state as string) || body.state;
-    const error = query.error as string;
-    const errorDescription = query.error_description as string;
+    const query = req?.query || {};
+    const body = req?.body || {};
 
-    const reqHost = req.headers?.['x-forwarded-host'] || req.headers?.host || '';
-    const reqProto = req.headers?.['x-forwarded-proto'] || 'https';
+    const code = typeof query.code === 'string' ? query.code : Array.isArray(query.code) ? query.code[0] : body.code;
+    const state = typeof query.state === 'string' ? query.state : Array.isArray(query.state) ? query.state[0] : body.state;
+    const error = typeof query.error === 'string' ? query.error : body.error;
+    const errorDescription = typeof query.error_description === 'string' ? query.error_description : body.error_description;
+
+    const reqHost = (req?.headers?.['x-forwarded-host'] || req?.headers?.host || '').trim();
+    const reqProto = (req?.headers?.['x-forwarded-proto'] || 'https').trim();
     const serverOrigin = reqHost ? `${reqProto}://${reqHost}` : 'https://bojoiduty.vercel.app';
 
     let clientOrigin = serverOrigin;
-    let tokenRedirectUri = body.redirectUri;
+    let tokenRedirectUri = typeof body.redirectUri === 'string' ? body.redirectUri : '';
 
-    if (state) {
+    if (state && typeof state === 'string') {
       try {
-        let decodedState = decodeURIComponent(state);
+        let decodedState = '';
+        try {
+          decodedState = decodeURIComponent(state);
+        } catch {
+          decodedState = state;
+        }
+
         if (!decodedState.startsWith('{') && !decodedState.startsWith('http')) {
           try {
             decodedState = Buffer.from(state, 'base64url').toString('utf8');
-          } catch {}
+          } catch {
+            try {
+              decodedState = Buffer.from(state, 'base64').toString('utf8');
+            } catch {}
+          }
         }
+
         if (decodedState.startsWith('{')) {
           const parsed = JSON.parse(decodedState);
           if (parsed.origin) clientOrigin = parsed.origin;
@@ -87,7 +128,9 @@ export async function handleLineOAuthCallback(req: any, res: any) {
         } else if (decodedState.startsWith('http://') || decodedState.startsWith('https://')) {
           clientOrigin = decodedState;
         }
-      } catch {}
+      } catch (e) {
+        console.warn('[LINE Callback State Warning]:', e);
+      }
     }
 
     const config = getLineConfig();
@@ -96,21 +139,22 @@ export async function handleLineOAuthCallback(req: any, res: any) {
       tokenRedirectUri = `${callbackBase.replace(/\/$/, '')}/api/auth/line/callback`;
     }
 
-    // Handle OAuth error return
+    // Handle OAuth error or missing code
     if (error || !code) {
-      const errMsg = errorDescription || error || 'Missing authorization code';
-      if (req.method === 'POST') {
-        return sendJson(res, 400, { error: errMsg });
+      const errMsg = errorDescription || error || 'Missing authorization code in LINE request';
+      if (req?.method === 'POST') {
+        return sendJson(res, 200, { success: false, error: errMsg });
       }
       return sendHtml(
         res,
-        400,
+        200,
         `<!DOCTYPE html>
 <html>
-<head><title>LINE Login Error</title><meta charset="utf-8" /></head>
-<body style="font-family: sans-serif; text-align: center; padding: 40px; background: #fff5f5; color: #9b1c1c;">
+<head><title>LINE Login Error</title><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /></head>
+<body style="font-family: system-ui, -apple-system, sans-serif; text-align: center; padding: 40px; background: #fff5f5; color: #9b1c1c;">
   <h2>❌ เข้าสู่ระบบ LINE ไม่สำเร็จ</h2>
   <p>${errMsg}</p>
+  <p style="font-size: 13px; color: #666; margin-top: 20px;">กำลังพาท่านกลับสู่แอปพลิเคชัน...</p>
   <script>
     setTimeout(() => { window.location.href = "${clientOrigin}"; }, 3000);
   </script>
@@ -120,18 +164,18 @@ export async function handleLineOAuthCallback(req: any, res: any) {
     }
 
     if (!config.lineChannelId || !config.lineChannelSecret) {
-      const errMsg = 'กรุณาตั้งค่า LINE Channel ID และ Channel Secret ก่อนใช้งาน LINE Login';
-      if (req.method === 'POST') return sendJson(res, 400, { error: errMsg });
-      return sendHtml(res, 400, `<h2>❌ ${errMsg}</h2>`);
+      const errMsg = 'กรุณาตั้งค่า LINE Channel ID และ Channel Secret ในระบบก่อนใช้งาน LINE Login';
+      if (req?.method === 'POST') return sendJson(res, 200, { success: false, error: errMsg });
+      return sendHtml(res, 200, `<h2>❌ ${errMsg}</h2>`);
     }
 
-    // Exchange code for token using the matching redirect_uri
+    // Exchange code for token
     const tokenParams = new URLSearchParams({
       grant_type: 'authorization_code',
-      code,
+      code: String(code),
       redirect_uri: tokenRedirectUri,
-      client_id: config.lineChannelId,
-      client_secret: config.lineChannelSecret,
+      client_id: String(config.lineChannelId),
+      client_secret: String(config.lineChannelSecret),
     });
 
     const tokenResponse = await fetch('https://api.line.me/oauth2/v2.1/token', {
@@ -142,15 +186,17 @@ export async function handleLineOAuthCallback(req: any, res: any) {
 
     if (!tokenResponse.ok) {
       const errData = await tokenResponse.json().catch(() => ({}));
-      const errMsg = 'LINE Token Error: ' + (errData.error_description || JSON.stringify(errData));
-      if (req.method === 'POST') return sendJson(res, 400, { error: errMsg });
+      const errMsg = 'LINE Token Error: ' + (errData.error_description || errData.error || JSON.stringify(errData));
+
+      if (req?.method === 'POST') return sendJson(res, 200, { success: false, error: errMsg });
+
       return sendHtml(
         res,
-        400,
+        200,
         `<!DOCTYPE html>
 <html>
-<head><title>LINE Token Error</title><meta charset="utf-8" /></head>
-<body style="font-family: sans-serif; text-align: center; padding: 40px; background: #fff5f5;">
+<head><title>LINE Token Error</title><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /></head>
+<body style="font-family: system-ui, -apple-system, sans-serif; text-align: center; padding: 40px; background: #fff5f5;">
   <h2 style="color: #9b1c1c;">❌ ${errMsg}</h2>
   <p style="color: #666; font-size: 13px;">Redirect URI used: <code>${tokenRedirectUri}</code></p>
   <p style="font-size: 12px; color: #888;">ระบบจะพากลับหน้าเว็บหลักใน 4 วินาที...</p>
@@ -172,8 +218,8 @@ export async function handleLineOAuthCallback(req: any, res: any) {
 
     if (!profileResponse.ok) {
       const errMsg = 'ไม่สามารถดึงข้อมูลโปรไฟล์จาก LINE ได้';
-      if (req.method === 'POST') return sendJson(res, 400, { error: errMsg });
-      return sendHtml(res, 400, `<h2>❌ ${errMsg}</h2>`);
+      if (req?.method === 'POST') return sendJson(res, 200, { success: false, error: errMsg });
+      return sendHtml(res, 200, `<h2>❌ ${errMsg}</h2>`);
     }
 
     const profileData = await profileResponse.json();
@@ -184,11 +230,10 @@ export async function handleLineOAuthCallback(req: any, res: any) {
       statusMessage: profileData.statusMessage,
     };
 
-    if (req.method === 'POST') {
+    if (req?.method === 'POST') {
       return sendJson(res, 200, { success: true, ...profile });
     }
 
-    // HTML response broadcasting results back to client via postMessage, BroadcastChannel, and LocalStorage
     return sendHtml(
       res,
       200,
@@ -197,6 +242,7 @@ export async function handleLineOAuthCallback(req: any, res: any) {
 <head>
   <title>LINE Login Success</title>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     body { font-family: system-ui, -apple-system, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; background-color: #f0fdf4; color: #166534; text-align: center; }
     .card { background: white; padding: 32px; border-radius: 20px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); border: 2px solid #22c55e; max-width: 380px; width: 90%; }
@@ -209,7 +255,7 @@ export async function handleLineOAuthCallback(req: any, res: any) {
   <div class="card">
     <div class="icon">🐶</div>
     <h2>เข้าสู่ระบบ LINE สำเร็จ!</h2>
-    <p>ยินดีต้อนรับคุณ ${profile.displayName}</p>
+    <p>ยินดีต้อนรับคุณ ${profile.displayName || ''}</p>
     <p style="margin-top: 12px; font-size: 12px; color: #65a30d;">กำลังนำท่านกลับสู่แอปพลิเคชัน...</p>
   </div>
   <script>
@@ -257,10 +303,10 @@ export async function handleLineOAuthCallback(req: any, res: any) {
     );
   } catch (err: any) {
     console.error('LINE Callback Error:', err);
-    if (req.method === 'POST') {
-      return sendJson(res, 500, { error: err.message || 'Server error during LINE authentication' });
+    if (req?.method === 'POST') {
+      return sendJson(res, 200, { success: false, error: err?.message || 'Server error during LINE authentication' });
     }
-    return sendHtml(res, 500, 'Server Error during LINE OAuth Callback');
+    return sendHtml(res, 200, `<!DOCTYPE html><html><body><h2>❌ เกิดข้อผิดพลาดในระบบ LINE OAuth Callback</h2><p>${err?.message || 'Server error'}</p></body></html>`);
   }
 }
 
@@ -268,20 +314,20 @@ export async function handleLineOAuthCallback(req: any, res: any) {
 export function handleLineLoginUrl(req: any, res: any) {
   try {
     const config = getLineConfig();
-    const query = req.query || {};
-    const reqHost = (req.headers?.['x-forwarded-host'] || req.headers?.host || '').trim();
-    const reqProto = (req.headers?.['x-forwarded-proto'] || 'https').trim();
+    const query = req?.query || {};
+    const reqHost = (req?.headers?.['x-forwarded-host'] || req?.headers?.host || '').trim();
+    const reqProto = (req?.headers?.['x-forwarded-proto'] || 'https').trim();
     const serverOrigin = reqHost ? `${reqProto}://${reqHost}` : 'https://bojoiduty.vercel.app';
 
-    let clientOrigin = (query.client_origin as string) || (req.headers?.origin as string) || serverOrigin;
+    let clientOrigin = (query.client_origin as string) || (req?.headers?.origin as string) || serverOrigin;
     clientOrigin = clientOrigin.replace(/\/$/, '');
 
-    // Canonical Callback URL registered in LINE Developers Console
     const callbackBaseOrigin = (config.publicSiteUrl || 'https://bojoiduty.vercel.app').replace(/\/$/, '');
     const redirectUri = `${callbackBaseOrigin}/api/auth/line/callback`;
 
     if (!config.lineChannelId) {
-      return sendJson(res, 400, {
+      return sendJson(res, 200, {
+        success: false,
         error: 'ยังไม่ได้ตั้งค่า LINE Channel ID กรุณากรอกในระบบตั้งค่า LINE OA',
       });
     }
@@ -305,6 +351,7 @@ export function handleLineLoginUrl(req: any, res: any) {
     const liffUrl = config.liffId ? `https://liff.line.me/${config.liffId}` : null;
 
     return sendJson(res, 200, {
+      success: true,
       loginUrl,
       liffUrl,
       state,
@@ -312,81 +359,91 @@ export function handleLineLoginUrl(req: any, res: any) {
       publicOrigin: callbackBaseOrigin,
     });
   } catch (err: any) {
-    return sendJson(res, 500, { error: err.message || 'Failed to generate login URL' });
+    return sendJson(res, 200, { success: false, error: err?.message || 'Failed to generate login URL' });
   }
 }
 
 // 3. LINE Config Handler
 export function handleLineConfig(req: any, res: any) {
-  const config = getLineConfig();
+  try {
+    const config = getLineConfig();
 
-  if (req.method === 'POST') {
-    const { lineChannelId, lineChannelSecret, lineAccessToken, liffId, publicSiteUrl } = req.body || {};
-    const updates: any = {};
-    if (lineChannelId !== undefined) updates.lineChannelId = lineChannelId.trim();
-    if (lineChannelSecret !== undefined) updates.lineChannelSecret = lineChannelSecret.trim();
-    if (lineAccessToken !== undefined) updates.lineAccessToken = lineAccessToken.trim();
-    if (liffId !== undefined) updates.liffId = liffId.trim();
-    if (publicSiteUrl !== undefined) updates.publicSiteUrl = publicSiteUrl.trim().replace(/\/$/, '');
+    if (req?.method === 'POST') {
+      const { lineChannelId, lineChannelSecret, lineAccessToken, liffId, publicSiteUrl } = req.body || {};
+      const updates: any = {};
+      if (lineChannelId !== undefined) updates.lineChannelId = String(lineChannelId).trim();
+      if (lineChannelSecret !== undefined) updates.lineChannelSecret = String(lineChannelSecret).trim();
+      if (lineAccessToken !== undefined) updates.lineAccessToken = String(lineAccessToken).trim();
+      if (liffId !== undefined) updates.liffId = String(liffId).trim();
+      if (publicSiteUrl !== undefined) updates.publicSiteUrl = String(publicSiteUrl).trim().replace(/\/$/, '');
 
-    updateLineConfig(updates);
+      updateLineConfig(updates);
+      return sendJson(res, 200, {
+        success: true,
+        message: 'อัปเดตการตั้งค่า LINE OA เรียบร้อยแล้ว',
+        configStatus: {
+          hasChannelId: !!config.lineChannelId,
+          hasChannelSecret: !!config.lineChannelSecret,
+          hasAccessToken: !!config.lineAccessToken,
+          publicSiteUrl: config.publicSiteUrl,
+        },
+      });
+    }
+
     return sendJson(res, 200, {
       success: true,
-      message: 'อัปเดตการตั้งค่า LINE OA เรียบร้อยแล้ว',
-      configStatus: {
-        hasChannelId: !!config.lineChannelId,
-        hasChannelSecret: !!config.lineChannelSecret,
-        hasAccessToken: !!config.lineAccessToken,
-        publicSiteUrl: config.publicSiteUrl,
-      },
+      hasChannelId: !!config.lineChannelId,
+      hasChannelSecret: !!config.lineChannelSecret,
+      hasAccessToken: !!config.lineAccessToken,
+      lineChannelId: config.lineChannelId,
+      liffId: config.liffId,
+      publicSiteUrl: config.publicSiteUrl || '',
+      webhookUrl: `${config.publicSiteUrl}/api/line/webhook`,
+      accessTokenLength: config.lineAccessToken ? config.lineAccessToken.length : 0,
+      lineChannelSecretMasked: config.lineChannelSecret
+        ? config.lineChannelSecret.slice(0, 4) + '••••••••' + config.lineChannelSecret.slice(-4)
+        : '',
+      lineAccessTokenMasked: config.lineAccessToken
+        ? config.lineAccessToken.slice(0, 8) + '••••••••' + config.lineAccessToken.slice(-6)
+        : '',
     });
+  } catch (err: any) {
+    return sendJson(res, 200, { success: false, error: err?.message || String(err) });
   }
-
-  return sendJson(res, 200, {
-    hasChannelId: !!config.lineChannelId,
-    hasChannelSecret: !!config.lineChannelSecret,
-    hasAccessToken: !!config.lineAccessToken,
-    lineChannelId: config.lineChannelId,
-    liffId: config.liffId,
-    publicSiteUrl: config.publicSiteUrl || '',
-    webhookUrl: `${config.publicSiteUrl}/api/line/webhook`,
-    accessTokenLength: config.lineAccessToken ? config.lineAccessToken.length : 0,
-    lineChannelSecretMasked: config.lineChannelSecret
-      ? config.lineChannelSecret.slice(0, 4) + '••••••••' + config.lineChannelSecret.slice(-4)
-      : '',
-    lineAccessTokenMasked: config.lineAccessToken
-      ? config.lineAccessToken.slice(0, 8) + '••••••••' + config.lineAccessToken.slice(-6)
-      : '',
-  });
 }
 
-const FALLBACK_FIREBASE_CONFIG = {
-  projectId: 'feisty-quasar-q53bd',
-  appId: '1:388800385483:web:6cf3b76992d27ecb89a64e',
-  apiKey: 'AIzaSyDkCS6LtGhrk0kU8WSfwDcMOv1QXexyrAg',
-  authDomain: 'feisty-quasar-q53bd.firebaseapp.com',
-  firestoreDatabaseId: 'ai-studio-pawsduty-53653dc7-02ef-4c8b-a749-e32b6a62213f',
-  storageBucket: 'feisty-quasar-q53bd.firebasestorage.app',
-  messagingSenderId: '388800385483',
-};
+const FIREBASE_PROJECT_ID = 'feisty-quasar-q53bd';
+const FIRESTORE_DATABASE_ID = 'ai-studio-pawsduty-53653dc7-02ef-4c8b-a749-e32b6a62213f';
 
-let serverDbInstance: any = null;
-let isDbInitAttempted = false;
-
-async function getServerDb() {
-  if (serverDbInstance) return serverDbInstance;
-  if (isDbInitAttempted) return null;
-  isDbInitAttempted = true;
+// Ultra-fast lightweight REST helper for Firestore in Serverless Functions
+async function fetchCollectionFromFirestoreRest(collectionName: string): Promise<any[]> {
   try {
-    const { initializeApp, getApps } = await import('firebase/app');
-    const { getFirestore } = await import('firebase/firestore');
-    const existingApps = getApps();
-    const fApp = existingApps.find((a) => a.name === 'server-app') || initializeApp(FALLBACK_FIREBASE_CONFIG, 'server-app');
-    serverDbInstance = getFirestore(fApp, FALLBACK_FIREBASE_CONFIG.firestoreDatabaseId);
-    return serverDbInstance;
-  } catch (e: any) {
-    console.warn('[Lazy Shared Firestore Init Notice]:', e.message);
-    return null;
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIRESTORE_DATABASE_ID}/documents/${collectionName}?pageSize=300`;
+    const res = await fetch(url);
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (!data.documents || !Array.isArray(data.documents)) return [];
+
+    return data.documents.map((doc: any) => {
+      const id = doc.name ? doc.name.split('/').pop() : '';
+      const fields = doc.fields || {};
+      const obj: any = { id };
+      for (const [key, valObj] of Object.entries<any>(fields)) {
+        if (valObj.stringValue !== undefined) obj[key] = valObj.stringValue;
+        else if (valObj.booleanValue !== undefined) obj[key] = valObj.booleanValue;
+        else if (valObj.integerValue !== undefined) obj[key] = Number(valObj.integerValue);
+        else if (valObj.doubleValue !== undefined) obj[key] = Number(valObj.doubleValue);
+        else if (valObj.nullValue !== undefined) obj[key] = null;
+        else if (valObj.mapValue !== undefined) obj[key] = valObj.mapValue;
+        else if (valObj.arrayValue !== undefined) {
+          obj[key] = (valObj.arrayValue.values || []).map((v: any) => v.stringValue || v.integerValue || v);
+        }
+      }
+      return obj;
+    });
+  } catch (e) {
+    console.warn(`[Firestore REST ${collectionName} Warning]:`, e);
+    return [];
   }
 }
 
@@ -418,22 +475,17 @@ export function formatThaiDateDisplay(dateStr: string): string {
 // Helper to resolve LINE User ID from username, nickname, app user ID, or raw LINE ID
 async function resolveLineUserIdFromTarget(targetUserId: string): Promise<{ lineUserId: string | null; userName: string; error?: string }> {
   if (!targetUserId) return { lineUserId: null, userName: '', error: 'ไม่ได้ระบุผู้รับ' };
-  
+
   const cleanTarget = targetUserId.trim();
-  // If already a valid LINE User ID format
   if (cleanTarget.startsWith('U') && cleanTarget.length >= 30) {
     return { lineUserId: cleanTarget, userName: cleanTarget };
   }
 
-  const db = await getServerDb();
-  if (!db) {
-    return { lineUserId: null, userName: cleanTarget, error: 'ระบบเชื่อมต่อฐานข้อมูล Firestore ไม่พร้อมใช้งาน' };
-  }
-
   try {
-    const { collection, getDocs } = await import('firebase/firestore');
-    const usersSnap = await getDocs(collection(db, 'users'));
-    const allUsers = usersSnap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+    const allUsers = await fetchCollectionFromFirestoreRest('users');
+    if (!allUsers || allUsers.length === 0) {
+      return { lineUserId: null, userName: cleanTarget, error: 'ไม่พบข้อมูลผู้ใช้ในระบบ' };
+    }
 
     const queryClean = cleanTarget.toLowerCase();
     const matchedUser = allUsers.find(
@@ -467,21 +519,20 @@ async function resolveLineUserIdFromTarget(targetUserId: string): Promise<{ line
       error: `ไม่พบบัญชีผู้ใช้ชื่อหรือรหัส "${cleanTarget}" ในระบบ`,
     };
   } catch (err: any) {
-    return { lineUserId: null, userName: cleanTarget, error: err.message };
+    return { lineUserId: null, userName: cleanTarget, error: err?.message || String(err) };
   }
 }
 
 // 4. Push Notification Handler
 export async function handleLinePushNotification(req: any, res: any) {
   try {
-    let body = req.body || {};
+    let body = req?.body || {};
     if (typeof body === 'string') {
       try {
         body = JSON.parse(body);
       } catch {}
     }
 
-    // Extract target user ID supporting both { to }, { userId }, { lineUserId }, { targetUserId }
     const rawTo = (
       body.to ||
       body.userId ||
@@ -490,7 +541,6 @@ export async function handleLinePushNotification(req: any, res: any) {
       ''
     ).trim();
 
-    // Extract message supporting both { messages }, { message }, { messageText }, { text }
     const rawMessage = body.messages ?? body.message ?? body.messageText ?? body.text;
 
     const config = getLineConfig();
@@ -552,8 +602,6 @@ export async function handleLinePushNotification(req: any, res: any) {
       messages = [{ type: 'text', text: textVal }];
     }
 
-    console.log(`[LINE Push Direct Dispatch] Target: ${recipientLineUserId}`);
-
     const pushResponse = await fetch('https://api.line.me/v2/bot/message/push', {
       method: 'POST',
       headers: {
@@ -566,7 +614,7 @@ export async function handleLinePushNotification(req: any, res: any) {
       }),
     });
 
-    const resText = await pushResponse.text();
+    const resText = await pushResponse.text().catch(() => '');
     let resData: any = {};
     try {
       resData = resText ? JSON.parse(resText) : {};
@@ -614,33 +662,26 @@ function getDateNDaysAway(n: number): string {
 export async function handleLineTriggerScheduledReminders(req: any, res: any) {
   try {
     const config = getLineConfig();
-    const body = req.body || {};
+    const body = req?.body || {};
     const forceRun = body.force === true;
 
-    const db = await getServerDb();
-    if (!db || !config.lineAccessToken || config.lineAccessToken.length < 50) {
+    if (!config.lineAccessToken || config.lineAccessToken.length < 50) {
       return sendJson(res, 200, {
         success: false,
         sentCount: 0,
-        reason: 'Firestore หรือ LINE Access Token ยังไม่พร้อมใช้งาน',
+        reason: 'LINE Access Token ยังไม่พร้อมใช้งาน',
       });
     }
-
-    const { collection, getDocs } = await import('firebase/firestore');
 
     const todayStr = getDateNDaysAway(0);
     const in1DayStr = getDateNDaysAway(1);
     const in3DaysStr = getDateNDaysAway(3);
 
-    const [usersSnap, shiftsSnap, annSnap] = await Promise.all([
-      getDocs(collection(db, 'users')),
-      getDocs(collection(db, 'shifts')),
-      getDocs(collection(db, 'announcements')),
+    const [allUsers, allShifts, allAnnouncements] = await Promise.all([
+      fetchCollectionFromFirestoreRest('users'),
+      fetchCollectionFromFirestoreRest('shifts'),
+      fetchCollectionFromFirestoreRest('announcements'),
     ]);
-
-    const allUsers = usersSnap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-    const allShifts = shiftsSnap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
-    const allAnnouncements = annSnap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
 
     const userMap = new Map<string, any>();
     allUsers.forEach((u) => userMap.set(u.id, u));
@@ -743,7 +784,7 @@ export async function handleLineTriggerScheduledReminders(req: any, res: any) {
               results.push(`ส่งแจ้งเตือน ${target.code} ถึง ${userName} (${target.dateStr}) สำเร็จ`);
             }
           } catch (pushErr: any) {
-            console.warn(`[Scheduled Push Error]: ${logKey}`, pushErr.message);
+            console.warn(`[Scheduled Push Error]: ${logKey}`, pushErr?.message);
           }
         }
       }
@@ -751,6 +792,6 @@ export async function handleLineTriggerScheduledReminders(req: any, res: any) {
 
     return sendJson(res, 200, { success: true, sentCount, results });
   } catch (err: any) {
-    return sendJson(res, 200, { success: false, error: err.message, sentCount: 0 });
+    return sendJson(res, 200, { success: false, error: err?.message || String(err), sentCount: 0 });
   }
 }
