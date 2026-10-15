@@ -68,6 +68,7 @@ const DEFAULT_LINE_CONFIG = {
   lineAccessToken:
     'KuXbOznb4aCQvDid2OyJ8F4+k3o221q6owdzubhHzw0hNexdEEw+3bYMMY4EhgjA/UQ6WvBR5/Zyy1WgjZwITGugy5rnBqMnkBBpqJY4NGVHmd1wfImEstyXPUV3blruSEEwn+ywp8PHBBIk0smvYgdB04t89/1O/w1cDnyilFU=',
   liffId: '',
+  publicSiteUrl: '', // e.g. https://your-project.vercel.app
 };
 
 let lineConfig = {
@@ -75,6 +76,7 @@ let lineConfig = {
   lineChannelSecret: process.env.LINE_CHANNEL_SECRET || DEFAULT_LINE_CONFIG.lineChannelSecret,
   lineAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN || DEFAULT_LINE_CONFIG.lineAccessToken,
   liffId: process.env.VITE_LINE_LIFF_ID || DEFAULT_LINE_CONFIG.liffId,
+  publicSiteUrl: process.env.PUBLIC_SITE_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '') || DEFAULT_LINE_CONFIG.publicSiteUrl,
 };
 
 // Automatic Webhook URL Sync Function (PUT https://api.line.me/v2/bot/channel/webhook/endpoint)
@@ -139,6 +141,7 @@ app.get('/api/line/config', (req, res) => {
     hasAccessToken: !!lineConfig.lineAccessToken,
     lineChannelId: lineConfig.lineChannelId,
     liffId: lineConfig.liffId,
+    publicSiteUrl: lineConfig.publicSiteUrl || '',
     webhookUrl: tunnelStatus.webhookUrl,
     tunnelUrl: tunnelStatus.url,
     tunnelActive: tunnelStatus.active,
@@ -159,12 +162,13 @@ app.get('/api/line/tunnel-status', (req, res) => {
 
 // API: Update LINE OA Config
 app.post('/api/line/config', async (req, res) => {
-  const { lineChannelId, lineChannelSecret, lineAccessToken, liffId } = req.body;
+  const { lineChannelId, lineChannelSecret, lineAccessToken, liffId, publicSiteUrl } = req.body;
 
   if (lineChannelId !== undefined) lineConfig.lineChannelId = lineChannelId.trim();
   if (lineChannelSecret !== undefined) lineConfig.lineChannelSecret = lineChannelSecret.trim();
   if (lineAccessToken !== undefined) lineConfig.lineAccessToken = lineAccessToken.trim();
   if (liffId !== undefined) lineConfig.liffId = liffId.trim();
+  if (publicSiteUrl !== undefined) lineConfig.publicSiteUrl = publicSiteUrl.trim().replace(/\/$/, '');
 
   // Auto sync webhook URL to LINE Console
   const serverHost = `${req.protocol}://${req.get('host')}`;
@@ -177,17 +181,35 @@ app.post('/api/line/config', async (req, res) => {
       hasChannelId: !!lineConfig.lineChannelId,
       hasChannelSecret: !!lineConfig.lineChannelSecret,
       hasAccessToken: !!lineConfig.lineAccessToken,
+      publicSiteUrl: lineConfig.publicSiteUrl,
     },
   });
 });
 
 app.get('/api/line/login-url', (req, res) => {
-  const clientOrigin = (req.query.client_origin as string) || (req.get('origin') as string) || `${req.protocol}://${req.get('host')}`;
-  
-  // Use the stable registered Callback URL on LINE Console (DEV_SERVER_URL)
-  // The client origin on Vercel is passed in state and redirected back seamlessly
-  const redirectUri = `${DEV_SERVER_URL}/api/auth/line/callback`;
-  const state = encodeURIComponent(clientOrigin);
+  const reqHost = (req.get('x-forwarded-host') || req.get('host') || '').trim();
+  const reqProto = (req.get('x-forwarded-proto') || req.protocol || 'https').trim();
+  const serverOrigin = reqHost ? `${reqProto}://${reqHost}` : DEV_SERVER_URL;
+
+  // Determine client origin (where user is clicking from, e.g. Vercel public site)
+  let clientOrigin = (req.query.client_origin as string) || (req.get('origin') as string) || serverOrigin;
+  clientOrigin = clientOrigin.replace(/\/$/, '');
+
+  // Determine callback base URL:
+  // 1. If explicit publicSiteUrl configured, prefer that for public sites
+  // 2. If client is on Vercel or non-dev domain, use clientOrigin
+  // 3. Otherwise fall back to DEV_SERVER_URL
+  let callbackBaseOrigin = clientOrigin;
+  if (lineConfig.publicSiteUrl) {
+    callbackBaseOrigin = lineConfig.publicSiteUrl;
+  } else if (clientOrigin.includes('localhost') || clientOrigin.includes('ais-dev-') || clientOrigin.includes('ais-pre-')) {
+    callbackBaseOrigin = clientOrigin.includes('ais-dev-') ? clientOrigin : DEV_SERVER_URL;
+  } else {
+    callbackBaseOrigin = clientOrigin;
+  }
+
+  // Allow override via query param if provided
+  const redirectUri = (req.query.redirect_uri as string) || `${callbackBaseOrigin}/api/auth/line/callback`;
 
   if (!lineConfig.lineChannelId) {
     return res.status(400).json({
@@ -195,37 +217,60 @@ app.get('/api/line/login-url', (req, res) => {
     });
   }
 
+  // Encode origin AND redirectUri into state so callback can reliably exchange token and redirect back
+  const stateObj = {
+    origin: clientOrigin,
+    redirectUri: redirectUri,
+    t: Date.now(),
+  };
+  const state = encodeURIComponent(JSON.stringify(stateObj));
+
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: lineConfig.lineChannelId,
     redirect_uri: redirectUri,
     state,
-    scope: 'profile openid email',
+    scope: 'profile openid',
   });
 
   const loginUrl = `https://access.line.me/oauth2/v2.1/authorize?${params.toString()}`;
   const liffUrl = lineConfig.liffId ? `https://liff.line.me/${lineConfig.liffId}` : null;
 
-  res.json({ loginUrl, liffUrl, state, redirectUri });
+  res.json({ loginUrl, liffUrl, state, redirectUri, publicOrigin: callbackBaseOrigin });
 });
 
 // API: LINE Login OAuth Callback handler
 async function handleLineOAuthCallback(req: express.Request, res: express.Response) {
   try {
-    const code = req.query.code as string || req.body?.code;
-    const state = req.query.state as string || req.body?.state;
+    const code = (req.query.code as string) || req.body?.code;
+    const state = (req.query.state as string) || req.body?.state;
     const error = req.query.error as string;
     const errorDescription = req.query.error_description as string;
 
-    // Determine client origin where user clicked login
-    let clientOrigin = `${req.protocol}://${req.get('host')}`;
+    // Determine client origin and target redirectUri
+    const reqHost = req.get('x-forwarded-host') || req.get('host') || '';
+    const reqProto = req.get('x-forwarded-proto') || req.protocol || 'https';
+    const serverOrigin = reqHost ? `${reqProto}://${reqHost}` : DEV_SERVER_URL;
+
+    let clientOrigin = serverOrigin;
+    let tokenRedirectUri = req.body?.redirectUri;
+
     if (state) {
       try {
         const decodedState = decodeURIComponent(state);
-        if (decodedState.startsWith('http://') || decodedState.startsWith('https://')) {
+        if (decodedState.startsWith('{')) {
+          const parsed = JSON.parse(decodedState);
+          if (parsed.origin) clientOrigin = parsed.origin;
+          if (parsed.redirectUri) tokenRedirectUri = parsed.redirectUri;
+        } else if (decodedState.startsWith('http://') || decodedState.startsWith('https://')) {
           clientOrigin = decodedState;
         }
       } catch {}
+    }
+
+    if (!tokenRedirectUri) {
+      const callbackBase = lineConfig.publicSiteUrl || clientOrigin;
+      tokenRedirectUri = `${callbackBase.replace(/\/$/, '')}/api/auth/line/callback`;
     }
 
     // Handle OAuth error return
@@ -249,19 +294,17 @@ async function handleLineOAuthCallback(req: express.Request, res: express.Respon
       `);
     }
 
-    const redirectUri = req.body?.redirectUri || `${DEV_SERVER_URL}/api/auth/line/callback`;
-
     if (!lineConfig.lineChannelId || !lineConfig.lineChannelSecret) {
       const errMsg = 'กรุณาตั้งค่า LINE Channel ID และ Channel Secret ก่อนใช้งาน LINE Login';
       if (req.method === 'POST') return res.status(400).json({ error: errMsg });
       return res.status(400).send(`<h2>❌ ${errMsg}</h2>`);
     }
 
-    // Exchange code for token
+    // Exchange code for token using the matching redirect_uri
     const tokenParams = new URLSearchParams({
       grant_type: 'authorization_code',
       code,
-      redirect_uri: redirectUri,
+      redirect_uri: tokenRedirectUri,
       client_id: lineConfig.lineChannelId,
       client_secret: lineConfig.lineChannelSecret,
     });
@@ -282,8 +325,10 @@ async function handleLineOAuthCallback(req: express.Request, res: express.Respon
         <head><title>LINE Token Error</title><meta charset="utf-8" /></head>
         <body style="font-family: sans-serif; text-align: center; padding: 40px; background: #fff5f5;">
           <h2 style="color: #9b1c1c;">❌ ${errMsg}</h2>
+          <p style="color: #666; font-size: 13px;">Redirect URI used: <code>${tokenRedirectUri}</code></p>
+          <p style="font-size: 12px; color: #888;">ระบบจะพากลับหน้าเว็บหลักใน 4 วินาที...</p>
           <script>
-            setTimeout(() => { window.location.href = "${clientOrigin}"; }, 3000);
+            setTimeout(() => { window.location.href = "${clientOrigin}"; }, 4000);
           </script>
         </body>
         </html>

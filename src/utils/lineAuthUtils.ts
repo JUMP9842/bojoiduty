@@ -1,16 +1,30 @@
 import { getApiUrl, safeFetchJson } from './apiUtils';
 
 /**
- * Returns the active LINE OAuth Callback URL pointing strictly to Express server container.
+ * Returns the active LINE OAuth Callback URL dynamically.
+ * Prioritizes the current domain (e.g. Vercel public domain https://xxx.vercel.app/api/auth/line/callback)
+ * or local/preview development containers.
  */
-export const getActiveLineCallbackUrl = (): string => {
+export const getActiveLineCallbackUrl = (customOrigin?: string): string => {
+  if (customOrigin) {
+    return `${customOrigin.replace(/\/$/, '')}/api/auth/line/callback`;
+  }
+  if (typeof window !== 'undefined' && window.location.origin) {
+    const origin = window.location.origin;
+    // If running in Google AI Studio static preview, map to the backend dev container
+    if (origin.includes('ais-pre-')) {
+      return origin.replace('ais-pre-', 'ais-dev-') + '/api/auth/line/callback';
+    }
+    // On Vercel, production, or custom domain, use the active domain!
+    return `${origin}/api/auth/line/callback`;
+  }
   return 'https://ais-dev-olsgx3yczrx7ghc5qkwxao-603131036827.asia-southeast1.run.app/api/auth/line/callback';
 };
 
 /**
  * Triggers LINE OAuth Login using window.open(authUrl, '_blank')
  * to avoid X-Frame-Options restrictions when running inside an iframe.
- * Includes a client-side fallback for static hosting environments (like Vercel).
+ * Uses dynamic client origin so Vercel public sites redirect back to Vercel, not the dev site.
  */
 export const loginWithLinePopup = async (_arg1?: any, _arg2?: any) => {
   try {
@@ -21,18 +35,23 @@ export const loginWithLinePopup = async (_arg1?: any, _arg2?: any) => {
 
     let loginUrl = data?.loginUrl;
 
-    // If backend is unavailable (e.g. Vercel static hosting mode), generate client-side fallback LINE login URL!
+    // If backend is unavailable (e.g. static hosting fallback), generate client-side fallback LINE login URL
     if (!ok || !loginUrl) {
       const channelId = '2011986358'; // Default BojoiDuty LINE Channel ID
-      const redirectUri = 'https://ais-dev-olsgx3yczrx7ghc5qkwxao-603131036827.asia-southeast1.run.app/api/auth/line/callback';
-      const state = encodeURIComponent(clientOrigin);
+      const redirectUri = getActiveLineCallbackUrl(clientOrigin);
+      const stateObj = {
+        origin: clientOrigin,
+        redirectUri,
+        t: Date.now(),
+      };
+      const state = encodeURIComponent(JSON.stringify(stateObj));
 
       const params = new URLSearchParams({
         response_type: 'code',
         client_id: channelId,
         redirect_uri: redirectUri,
         state,
-        scope: 'profile openid email',
+        scope: 'profile openid',
       });
       loginUrl = `https://access.line.me/oauth2/v2.1/authorize?${params.toString()}`;
     }

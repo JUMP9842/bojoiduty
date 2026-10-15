@@ -119,18 +119,30 @@ export const LineCallbackHandler: React.FC = () => {
     }
 
     const code = searchParams.get('code');
+    const state = searchParams.get('state');
 
     if (!code) return;
 
     setStatus('loading');
     setMessage('กำลังตรวจสอบรหัสยืนยันตัวตนกับ LINE OA...');
 
-    const redirectUri = getActiveLineCallbackUrl();
+    let redirectUri = getActiveLineCallbackUrl();
+    if (state) {
+      try {
+        const decoded = decodeURIComponent(state);
+        if (decoded.startsWith('{')) {
+          const parsed = JSON.parse(decoded);
+          if (parsed.redirectUri) {
+            redirectUri = parsed.redirectUri;
+          }
+        }
+      } catch {}
+    }
 
     safeFetchJson(getApiUrl('/api/line/callback'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, redirectUri }),
+      body: JSON.stringify({ code, redirectUri, state }),
     }).then(async ({ ok, data }) => {
         if (ok && data.success) {
           const profile = {

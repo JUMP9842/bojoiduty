@@ -26,6 +26,7 @@ import {
   AlertCircle,
   Cloud,
   ShieldCheck,
+  Globe,
 } from 'lucide-react';
 import { AVAILABLE_COLORS, AVAILABLE_ICONS } from '../data/initialData';
 import { getShiftMorningUserId, getShiftEveningUserId } from '../utils/shiftUtils';
@@ -66,11 +67,14 @@ export const BackendModal: React.FC<BackendModalProps> = ({
   const [activeTab, setActiveTab] = useState<'duty_assign' | 'monthly_unlock' | 'bathing' | 'members' | 'fair_auto' | 'line_guide'>('duty_assign');
 
   // Line Guide & Test Push State
-  const [lineGuideSubTab, setLineGuideSubTab] = useState<'webhook' | 'guide' | 'test'>('webhook');
+  const [lineGuideSubTab, setLineGuideSubTab] = useState<'callback' | 'webhook' | 'guide' | 'test'>('callback');
   const [testLineUserId, setTestLineUserId] = useState('');
   const [testResult, setTestResult] = useState<{ success: boolean; msg: string } | null>(null);
   const [isTesting, setIsTesting] = useState(false);
   const [activeWebhookUrl, setActiveWebhookUrl] = useState('https://pawsduty-duty.loca.lt/api/line/webhook');
+  const [publicSiteUrl, setPublicSiteUrl] = useState('');
+  const [isSavingPublicUrl, setIsSavingPublicUrl] = useState(false);
+  const [saveUrlSuccess, setSaveUrlSuccess] = useState(false);
 
   React.useEffect(() => {
     if (isOpen) {
@@ -78,10 +82,31 @@ export const BackendModal: React.FC<BackendModalProps> = ({
         .then((res) => res.json())
         .then((data) => {
           if (data.webhookUrl) setActiveWebhookUrl(data.webhookUrl);
+          if (data.publicSiteUrl) setPublicSiteUrl(data.publicSiteUrl);
         })
         .catch(console.warn);
     }
   }, [isOpen]);
+
+  const handleSavePublicSiteUrl = async () => {
+    setIsSavingPublicUrl(true);
+    setSaveUrlSuccess(false);
+    try {
+      const res = await fetch(getApiUrl('/api/line/config'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ publicSiteUrl: publicSiteUrl.trim() }),
+      });
+      if (res.ok) {
+        setSaveUrlSuccess(true);
+        setTimeout(() => setSaveUrlSuccess(false), 3500);
+      }
+    } catch (err) {
+      console.warn('Failed to save public site url:', err);
+    } finally {
+      setIsSavingPublicUrl(false);
+    }
+  };
 
   const handleTestPush = async () => {
     if (!testLineUserId.trim()) {
@@ -1219,7 +1244,18 @@ export const BackendModal: React.FC<BackendModalProps> = ({
           {/* TAB 6: Line Guide & Webhook Settings */}
           {activeTab === 'line_guide' && (
             <div className="space-y-4">
-              <div className="flex border-b border-neutral-200 bg-neutral-50 px-2 pt-1 gap-2 text-xs">
+              <div className="flex flex-wrap border-b border-neutral-200 bg-neutral-50 px-2 pt-1 gap-2 text-xs">
+                <button
+                  onClick={() => setLineGuideSubTab('callback')}
+                  className={`py-2 px-3 font-bold rounded-t-xl transition-all cursor-pointer flex items-center gap-1.5 border-b-2 ${
+                    lineGuideSubTab === 'callback'
+                      ? 'bg-white text-blue-700 border-blue-600 shadow-xs'
+                      : 'text-neutral-500 hover:text-neutral-900 border-transparent'
+                  }`}
+                >
+                  <Globe className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Callback URL (Vercel & Login)</span>
+                </button>
                 <button
                   onClick={() => setLineGuideSubTab('webhook')}
                   className={`py-2 px-3 font-bold rounded-t-xl transition-all cursor-pointer flex items-center gap-1.5 border-b-2 ${
@@ -1254,6 +1290,118 @@ export const BackendModal: React.FC<BackendModalProps> = ({
                   <span>ทดสอบแจ้งเตือน (Test Push)</span>
                 </button>
               </div>
+
+              {lineGuideSubTab === 'callback' && (() => {
+                const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
+                const effectiveBase = publicSiteUrl.trim() || currentOrigin;
+                const activeCallbackUrl = `${effectiveBase.replace(/\/$/, '')}/api/auth/line/callback`;
+
+                return (
+                  <div className="space-y-4 pt-2">
+                    {/* Notice & Highlights */}
+                    <div className="p-3.5 rounded-xl bg-gradient-to-r from-blue-600 via-indigo-600 to-sky-700 text-white space-y-1 shadow-md">
+                      <div className="flex items-center gap-2">
+                        <Globe className="w-5 h-5 text-blue-200" />
+                        <h4 className="font-bold text-sm">LINE Login Callback URL สำหรับเว็บจริง (Vercel)</h4>
+                      </div>
+                      <p className="text-[11px] text-blue-100 leading-relaxed">
+                        ระบบคำนวณ Callback URL ให้โดยอัตโนมัติตามโดเมนของ Vercel เพื่อให้เมื่อเพื่อนหรือคนอื่นกดล็อกอินผ่าน LINE จะเด้งกลับมาที่เว็บจริงของคุณบน Vercel ทันที ไม่เด้งไปหน้า developer site
+                      </p>
+                    </div>
+
+                    {/* Active Callback URL Box */}
+                    <div className="p-4 rounded-xl bg-blue-50/70 border-2 border-blue-400 space-y-3 shadow-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="px-2.5 py-0.5 bg-blue-600 text-white font-black text-[10px] rounded-md tracking-wide">
+                          Callback URL ที่ต้องใส่ใน LINE Developers Console
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => copyToClipboard(activeCallbackUrl)}
+                          className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 active:scale-95 text-white font-bold text-xs flex items-center gap-1.5 cursor-pointer transition-all shadow-xs"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                          <span>คัดลอก Callback URL</span>
+                        </button>
+                      </div>
+
+                      <div className="bg-white p-3 rounded-lg border border-blue-200 space-y-1">
+                        <p className="text-[10px] text-neutral-500 font-semibold">
+                          นำ URL ด้านล่างนี้ไปใส่ในช่อง **Callback URL** ใน LINE Developers Console:
+                        </p>
+                        <p className="font-mono text-xs text-blue-950 font-bold select-all break-all bg-blue-50/80 p-2.5 rounded-md border border-blue-200">
+                          {activeCallbackUrl}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2 text-[11px] text-blue-900 font-medium bg-white/90 p-2.5 rounded-lg border border-blue-200">
+                        <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" />
+                        <span>รองรับการเข้าสู่ระบบแบบอัตโนมัติ 100% ไม่ติดสิทธิ์ Developer Site</span>
+                      </div>
+                    </div>
+
+                    {/* CRITICAL WARNING / SOLUTION FOR ERROR 400: DEVELOPER CHANNEL */}
+                    <div className="p-4 rounded-xl bg-amber-50 border-2 border-amber-400 space-y-2.5 text-amber-950 shadow-xs">
+                      <div className="flex items-center gap-2">
+                        <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
+                        <h4 className="font-bold text-xs text-amber-900">
+                          วิธีแก้ Error 400: "Developer channel ไม่สามารถเข้าสู่ระบบได้" เมื่อให้เพื่อนล็อกอิน
+                        </h4>
+                      </div>
+                      <div className="text-[11px] space-y-1.5 text-amber-800 leading-relaxed bg-white/80 p-3 rounded-lg border border-amber-200">
+                        <p>
+                          <strong>สาเหตุ:</strong> ช่อง LINE Login Channel บน LINE Developers Console ยังอยู่ในสถานะ <strong>"Developing" (กำลังพัฒนา)</strong> ทำให้มีเพียงเจ้าของ Channel เท่านั้นที่ล็อกอินได้ ส่วนเพื่อนหรือบุคคลอื่นจะติด Error 400 ทันที
+                        </p>
+                        <p className="pt-1">
+                          <strong>วิธีปลดล็อกให้เพื่อนล็อกอินได้ (ทำง่ายๆ 1 คลิก):</strong>
+                        </p>
+                        <ol className="list-decimal pl-5 space-y-1 text-neutral-800 font-medium">
+                          <li>เปิดหน้า <a href="https://developers.line.biz/console/" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline font-bold">LINE Developers Console</a> แล้วคลิกเลือก Channel LINE Login ของคุณ</li>
+                          <li>มองที่แถบด้านบนสุด ถัดจากชื่อ Channel จะมีปุ่มสถานะสีเทา/เหลืองเขียนว่า <strong>"Developing"</strong></li>
+                          <li>คลิกที่ปุ่มนั้นแล้วกดเปลี่ยนเป็น <strong>"Published" (เผยแพร่)</strong></li>
+                          <li>เสร็จสิ้น! เมื่อสถานะเปลี่ยนเป็น <strong>Published</strong> เพื่อนทุกคนจะสามารถกดล็อกอินผ่าน LINE ได้ทันที ไม่ติดข้อความ error 400 อีกต่อไปครับ 🎉</li>
+                        </ol>
+                      </div>
+                    </div>
+
+                    {/* Custom Public URL Config (Optional override) */}
+                    <div className="p-4 rounded-xl bg-white border border-neutral-200 space-y-3 shadow-xs">
+                      <div className="flex items-center justify-between">
+                        <h5 className="font-bold text-xs text-neutral-800 flex items-center gap-1.5">
+                          <Settings className="w-3.5 h-3.5 text-neutral-500" />
+                          <span>ระบุ Vercel Public Site URL แบบเจาะจง (ถ้าต้องการ)</span>
+                        </h5>
+                        {saveUrlSuccess && (
+                          <span className="text-[11px] font-bold text-emerald-600 flex items-center gap-1">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            <span>บันทึกสำเร็จ</span>
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-neutral-500">
+                        หากท่านต้องการล็อก URL ปลายทางให้เป็นโดเมน Vercel ของท่านอย่างแน่นอนเสมอ (เช่น <code className="bg-neutral-100 px-1 py-0.5 rounded text-neutral-700">https://pawsduty.vercel.app</code>) สามารถกรอกที่นี่ได้เลย:
+                      </p>
+                      <div className="flex gap-2">
+                        <input
+                          type="url"
+                          placeholder="https://your-app.vercel.app"
+                          value={publicSiteUrl}
+                          onChange={(e) => setPublicSiteUrl(e.target.value)}
+                          className="flex-1 px-3 py-2 text-xs rounded-xl bg-neutral-50 border border-neutral-300 focus:bg-white focus:border-blue-500 focus:outline-hidden font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={handleSavePublicSiteUrl}
+                          disabled={isSavingPublicUrl}
+                          className="px-4 py-2 bg-neutral-900 hover:bg-neutral-800 text-white rounded-xl text-xs font-bold transition-all disabled:opacity-50 cursor-pointer"
+                        >
+                          {isSavingPublicUrl ? 'กำลังบันทึก...' : 'บันทึก URL'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {lineGuideSubTab === 'webhook' && (
                 <div className="space-y-4 pt-2">
