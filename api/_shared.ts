@@ -466,17 +466,39 @@ async function resolveLineUserIdFromTarget(targetUserId: string): Promise<{ line
 export async function handleLinePushNotification(req: any, res: any) {
   try {
     const config = getLineConfig();
-    const body = req.body || {};
-    const { targetUserId, messageText, flexMessage } = body;
+    let body = req.body || {};
+    if (typeof body === 'string') {
+      try {
+        body = JSON.parse(body);
+      } catch {}
+    }
 
-    if (!config.lineAccessToken) {
+    const targetUserId = body.targetUserId || body.to || body.userId || body.lineUserId;
+    const messageText = body.messageText || body.message;
+    const customMessages = body.messages;
+    const flexMessage = body.flexMessage;
+
+    // Token resolution priority: body > Authorization header > config > process.env > default
+    const authHeader = req.headers?.['authorization'] || req.headers?.Authorization || '';
+    const headerToken = authHeader.replace(/^Bearer\s+/i, '').trim();
+    const rawToken =
+      body.token ||
+      body.lineAccessToken ||
+      headerToken ||
+      config.lineAccessToken ||
+      process.env.LINE_CHANNEL_ACCESS_TOKEN ||
+      DEFAULT_LINE_CONFIG.lineAccessToken ||
+      '';
+    const token = typeof rawToken === 'string' ? rawToken.trim() : '';
+
+    if (!token) {
       return sendJson(res, 200, {
         success: false,
         error: 'ยังไม่ได้ตั้งค่า LINE Messaging API Channel Access Token ในระบบ',
       });
     }
 
-    if (config.lineAccessToken.length < 50) {
+    if (token.length < 50) {
       return sendJson(res, 200, {
         success: false,
         error:
@@ -501,6 +523,8 @@ export async function handleLinePushNotification(req: any, res: any) {
 
     const messages = flexMessage
       ? [flexMessage]
+      : Array.isArray(customMessages) && customMessages.length > 0
+      ? customMessages
       : [
           {
             type: 'text',
@@ -509,14 +533,13 @@ export async function handleLinePushNotification(req: any, res: any) {
           },
         ];
 
-    // Requirement 4: Debug log before sending
     console.log(`[LINE Push Server Dispatch] Target LINE User ID: ${recipientLineUserId} | Text: "${messageText || ''}"`);
 
     const pushResponse = await fetch('https://api.line.me/v2/bot/message/push', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${config.lineAccessToken}`,
+        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify({
         to: recipientLineUserId,
@@ -524,18 +547,19 @@ export async function handleLinePushNotification(req: any, res: any) {
       }),
     });
 
+    const errJson = await pushResponse.json().catch(() => ({}));
+
     if (!pushResponse.ok) {
-      const errJson = await pushResponse.json().catch(() => ({}));
-      // Requirement 4: Detailed error message in console.error
       console.error(`[LINE Push API Error] Status: ${pushResponse.status} | Response:`, JSON.stringify(errJson));
-      const errMsg = errJson?.message || JSON.stringify(errJson);
+      const errMsg = errJson?.message || errJson?.error || JSON.stringify(errJson);
       let userFriendlyNotice = `LINE API Error (${pushResponse.status}): ${errMsg}`;
-      if (errMsg.includes('property') && errMsg.includes('to')) {
+      if (typeof errMsg === 'string' && errMsg.includes('property') && errMsg.includes('to')) {
         userFriendlyNotice += ' (ผู้รับยังไม่ได้กดแอดเพื่อน LINE OA @090puwgd หรือบล็อกบอทอยู่)';
       }
       return sendJson(res, 200, {
         success: false,
         error: userFriendlyNotice,
+        details: errJson,
       });
     }
 
@@ -549,7 +573,11 @@ export async function handleLinePushNotification(req: any, res: any) {
     });
   } catch (err: any) {
     console.error('[Push Notification Error]: Exception occurred:', err.message || err);
-    return sendJson(res, 200, { success: false, error: err.message });
+    return sendJson(res, 200, {
+      success: false,
+      error: err.message || String(err) || 'Failed to send LINE push notification',
+      details: String(err.stack || err),
+    });
   }
 }
 

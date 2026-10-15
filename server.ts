@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import { initializeApp, getApps } from 'firebase/app';
 import { getFirestore, collection, getDocs, doc, setDoc } from 'firebase/firestore';
+import { handleLinePushNotification } from './api/_shared.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -952,123 +953,70 @@ function parseRequestBody(req: express.Request): any {
   return {};
 }
 
-// API: Send Push Notification via Messaging API
-app.all(['/api/line/push-notification', '/line/push-notification', '/api/line-push', '/line-push', '/.netlify/functions/line-push'], async (req, res) => {
-  if (req.method === 'OPTIONS') {
-    return res.status(200).send('OK');
-  }
-
+app.post(['/api/line/push-notification', '/api/line-push'], express.json(), async (req, res) => {
   try {
-    const body = parseRequestBody(req);
-    const target = body.targetUserId || body.to || body.lineUserId;
-    const messageText = body.messageText;
-    const customMessages = body.messages;
-    const flexMessage = body.flexMessage;
-
-    // Token resolution priority: body > header > server config > process.env > default
-    const authHeader = req.headers['authorization'] || '';
-    const headerToken = authHeader.replace(/^Bearer\s+/i, '').trim();
-    const rawToken =
+    const body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
+    
+    // รองรับชื่อตัวแปรทุกรูปแบบที่หน้าบ้านส่งมา
+    const rawTo = body.to || body.lineUserId || body.userId || body.targetUserId;
+    const rawMessage = body.messages || body.message || body.messageText || body.text;
+    const token = (
+      body.token || 
       body.lineAccessToken ||
-      headerToken ||
+      process.env.LINE_CHANNEL_ACCESS_TOKEN || 
+      process.env.VITE_LINE_CHANNEL_ACCESS_TOKEN || 
       lineConfig.lineAccessToken ||
-      process.env.LINE_CHANNEL_ACCESS_TOKEN ||
       DEFAULT_LINE_CONFIG.lineAccessToken ||
-      '';
-    const token = typeof rawToken === 'string' ? rawToken.trim() : '';
+      ''
+    ).trim();
 
     if (!token) {
-      return res.status(200).json({
-        success: false,
-        error: 'LINE_CHANNEL_ACCESS_TOKEN is missing or undefined (ยังไม่ได้ตั้งค่า Token)',
-      });
+      return res.status(400).json({ error: 'ไม่พบค่า LINE_CHANNEL_ACCESS_TOKEN ในระบบ (.env)' });
+    }
+    if (!rawTo) {
+      return res.status(400).json({ error: 'ไม่พบรหัส LINE User ID (to) ของผู้รับ' });
     }
 
-    if (token.length < 50) {
-      return res.status(200).json({
-        success: false,
-        error:
-          'Channel Access Token ไม่ถูกต้อง: Token สำหรับส่งข้อความต้องเป็น Long-lived Token (ขนาดยาว ~172 ตัวอักษร) ที่ได้จากการกดปุ่ม "Issue" ในแท็บ Messaging API ของ LINE Developers Console',
-      });
-    }
-
-    if (!target) {
-      return res.status(200).json({ success: false, error: 'กรุณาระบุผู้รับการแจ้งเตือน (LINE User ID, ชื่อผู้ใช้ หรือชื่อเล่น)' });
-    }
-
-    // Resolve target to actual LINE User ID if necessary
-    let recipientLineUserId = target;
-    let userName = target;
-
-    if (!(typeof target === 'string' && target.startsWith('U') && target.length >= 30)) {
-      const resolved = await resolveLineUserIdFromTarget(target);
-      if (!resolved.lineUserId) {
-        return res.status(200).json({
-          success: false,
-          error: resolved.error || `ไม่สามารถระบุ LINE User ID ของผู้รับ "${target}" ได้`,
-        });
+    let to = rawTo;
+    if (typeof rawTo === 'string' && !(rawTo.startsWith('U') && rawTo.length >= 30)) {
+      const resolved = await resolveLineUserIdFromTarget(rawTo);
+      if (resolved.lineUserId) {
+        to = resolved.lineUserId;
       }
-      recipientLineUserId = resolved.lineUserId;
-      userName = resolved.userName;
     }
 
-    // Build LINE messages payload
-    const messages = flexMessage
-      ? [flexMessage]
-      : Array.isArray(customMessages) && customMessages.length > 0
-      ? customMessages
-      : [
-          {
-            type: 'text',
-            text: messageText || '🐶 [BojoiDuty] คุณมีแจ้งเตือนเวรใหม่ที่ใกล้จะถึง กรุณาตรวจสอบในระบบ',
-          },
-        ];
+    // จัดรูปแบบข้อความให้ตรงตามมาตรฐาน LINE Messaging API
+    const messages = Array.isArray(rawMessage)
+      ? rawMessage
+      : [{ type: 'text', text: String(rawMessage || 'แจ้งเตือนระบบเวร') }];
 
-    console.log(`[LINE Push Server Dispatch] Target LINE User ID: ${recipientLineUserId} | Message Text: "${messageText || ''}"`);
-
-    const pushResponse = await fetch('https://api.line.me/v2/bot/message/push', {
+    const lineRes = await fetch('https://api.line.me/v2/bot/message/push', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
+        'Authorization': `Bearer ${token}`
       },
-      body: JSON.stringify({
-        to: recipientLineUserId,
-        messages,
-      }),
+      body: JSON.stringify({ to, messages })
     });
 
-    const errJson = await pushResponse.json().catch(() => ({}));
+    const responseText = await lineRes.text();
+    let responseData;
+    try {
+      responseData = responseText ? JSON.parse(responseText) : {};
+    } catch {
+      responseData = { message: responseText };
+    }
 
-    if (!pushResponse.ok) {
-      console.error(`[LINE Push API Error] Status: ${pushResponse.status} | Response:`, JSON.stringify(errJson));
-      const errMsg = errJson?.message || errJson?.error || JSON.stringify(errJson);
-      let userFriendlyNotice = `LINE API Error (${pushResponse.status}): ${errMsg}`;
-      if (typeof errMsg === 'string' && errMsg.includes('property') && errMsg.includes('to')) {
-        userFriendlyNotice += ' (ผู้รับยังไม่ได้กดแอดเพื่อน LINE OA @090puwgd หรือบล็อกบอทอยู่)';
-      }
-      return res.status(200).json({
-        success: false,
-        error: userFriendlyNotice,
-        details: errJson,
+    if (!lineRes.ok) {
+      return res.status(lineRes.status).json({
+        error: responseData.message || `LINE API ตอบกลับสถานะ ${lineRes.status}`,
+        details: responseData
       });
     }
 
-    console.log(`[LINE Push API Success]: Message delivered to ${recipientLineUserId}`);
-
-    return res.status(200).json({
-      success: true,
-      message: `ส่งการแจ้งเตือนถึงคุณ ${userName} เข้า LINE สำเร็จ!`,
-      targetUserId: recipientLineUserId,
-      recipientName: userName,
-    });
+    return res.status(200).json({ success: true, data: responseData });
   } catch (err: any) {
-    console.error('[Push Notification Error]: Exception occurred:', err.message || err);
-    return res.status(200).json({
-      success: false,
-      error: err.message || String(err) || 'Failed to send LINE push notification',
-      details: String(err.stack || err),
-    });
+    return res.status(500).json({ error: err?.message || 'Internal Server Error' });
   }
 });
 

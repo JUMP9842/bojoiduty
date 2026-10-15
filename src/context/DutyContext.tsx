@@ -486,83 +486,32 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // 4. Send via Server Proxy endpoint to prevent CORS
     try {
-      const payload = {
-        targetUserId: lineUserId,
-        lineUserId: lineUserId,
-        to: lineUserId,
-        messageText: messageText,
-        messages: [{ type: 'text', text: messageText }],
-        lineAccessToken: DEFAULT_LINE_ACCESS_TOKEN,
-      };
+      const response = await fetch(getApiUrl('/api/line/push-notification'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: lineUserId, // ตัวแปรที่เก็บ LINE User ID (ขึ้นต้นด้วย U...)
+          message: messageText, // ข้อความแจ้งเตือน
+          token: DEFAULT_LINE_ACCESS_TOKEN || (import.meta.env as any).VITE_LINE_CHANNEL_ACCESS_TOKEN || '' // แนบ Token จากหน้าบ้านเผื่อหลังบ้านไม่มี
+        })
+      });
 
-      const headers = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${DEFAULT_LINE_ACCESS_TOKEN}`,
-      };
-
-      let res: Response | null = null;
-      let data: any = null;
-
-      try {
-        res = await fetch('/api/line-push', {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(payload),
-        });
-        if (res) {
-          data = await res.json().catch(() => null);
-        }
-      } catch (e) {
-        console.warn('[LINE Push] Local /api/line-push failed:', e);
-      }
-
-      // If primary failed or returned server/network error, try netlify/functions fallback
-      if ((!res || !res.ok) && (!data || data.success === false)) {
-        try {
-          const fallbackRes = await fetch('/.netlify/functions/line-push', {
-            method: 'POST',
-            headers,
-            body: JSON.stringify(payload),
-          });
-          const fallbackData = await fallbackRes.json().catch(() => null);
-          if (fallbackRes.ok && fallbackData?.success) {
-            res = fallbackRes;
-            data = fallbackData;
-          } else if (fallbackData && fallbackData.error) {
-            // Keep detailed error if returned
-            res = fallbackRes;
-            data = fallbackData;
-          }
-        } catch (e) {
-          console.warn('[LINE Push] Netlify function fallback failed:', e);
-        }
-      }
-
-      const httpStatus = res ? res.status : 0;
-      const isSuccess = data ? data.success !== false : (res ? res.ok : false);
-
-      if (res && res.ok && isSuccess) {
-        console.log(`[LINE Push Success]: Delivered to ${userName} (${lineUserId})`);
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        const errMsg = errData.error || errData.message || response.statusText || 'Unknown Error';
+        console.error(`[LINE Push Error] Status ${response.status}:`, errMsg);
         if (showDiagnosticAlert) {
-          window.alert(`ส่งแจ้งเตือน LINE สำเร็จไปยัง ${userName} (LINE ID: ${lineUserId})`);
-        }
-        return true;
-      } else {
-        const rawErr =
-          data?.error ||
-          data?.message ||
-          data?.details?.message ||
-          data?.details?.error ||
-          (res && res.statusText ? res.statusText : null) ||
-          'Unknown Server Error';
-        const errorMessage = typeof rawErr === 'string' && rawErr.trim().length > 0 ? rawErr.trim() : 'Server Error (No error details returned)';
-
-        console.error(`[LINE Push API Error] Status: ${httpStatus} | Error:`, errorMessage, data);
-        if (showDiagnosticAlert) {
-          window.alert(`เกิดข้อผิดพลาดในการส่ง LINE (Status ${httpStatus}): ${errorMessage}`);
+          window.alert(`เกิดข้อผิดพลาดในการส่ง LINE (Status ${response.status}): ${errMsg}`);
         }
         return false;
       }
+
+      const resJson = await response.json().catch(() => ({}));
+      console.log(`[LINE Push Success]: Delivered to ${userName} (${lineUserId})`, resJson);
+      if (showDiagnosticAlert) {
+        window.alert(`ส่งแจ้งเตือน LINE สำเร็จไปยัง ${userName} (LINE ID: ${lineUserId})`);
+      }
+      return true;
     } catch (err: any) {
       console.error(`[LINE Push Network Exception]`, err);
       if (showDiagnosticAlert) {
