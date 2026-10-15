@@ -510,13 +510,15 @@ export async function handleLinePushNotification(req: any, res: any) {
     ).trim();
 
     if (!token) {
-      return sendJson(res, 400, {
+      return sendJson(res, 200, {
+        success: false,
         error: 'ไม่พบ LINE Channel Access Token ในระบบ (.env หรือการตั้งค่า Backend)',
       });
     }
 
     if (!rawTo) {
-      return sendJson(res, 400, {
+      return sendJson(res, 200, {
+        success: false,
         error: 'ไม่พบรหัส LINE User ID (to หรือ userId) ของผู้รับ',
       });
     }
@@ -534,7 +536,8 @@ export async function handleLinePushNotification(req: any, res: any) {
     }
 
     if (!recipientLineUserId || !recipientLineUserId.startsWith('U')) {
-      return sendJson(res, 400, {
+      return sendJson(res, 200, {
+        success: false,
         error: `ผู้ใช้ "${rawTo}" ยังไม่ได้ผูกบัญชี LINE OA (ไม่พบรหัส LINE User ID ที่ขึ้นต้นด้วย U)`,
       });
     }
@@ -573,7 +576,8 @@ export async function handleLinePushNotification(req: any, res: any) {
 
     if (!pushResponse.ok) {
       const lineError = resData.message || resData.error || resText || `LINE API ตอบกลับสถานะ ${pushResponse.status}`;
-      return sendJson(res, pushResponse.status || 400, {
+      return sendJson(res, 200, {
+        success: false,
         error: `เกิดข้อผิดพลาดจาก LINE Messaging API (${pushResponse.status}): ${lineError}`,
         details: resData,
       });
@@ -587,7 +591,8 @@ export async function handleLinePushNotification(req: any, res: any) {
     });
   } catch (err: any) {
     console.error('[LINE Push Shared Exception]:', err);
-    return sendJson(res, 500, {
+    return sendJson(res, 200, {
+      success: false,
       error: err?.message || String(err) || 'Internal Server Error in LINE Push Handler',
     });
   }

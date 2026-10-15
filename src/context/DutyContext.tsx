@@ -588,6 +588,7 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     const apiEndpoints = ['/api/line/push-notification', '/api/line-push'];
+    let lastErrorDetail = '';
 
     for (const endpoint of apiEndpoints) {
       try {
@@ -603,7 +604,7 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
           jsonResponse = rawText ? JSON.parse(rawText) : {};
         } catch {}
 
-        if (response.ok && (jsonResponse?.success !== false && !jsonResponse?.error)) {
+        if (response.ok && jsonResponse?.success !== false && !jsonResponse?.error) {
           console.log(`[LINE Push Success via ${endpoint}]: Delivered to ${userName} (${targetLineUserId})`, jsonResponse || rawText);
           if (showDiagnosticAlert) {
             window.alert(`ส่งการแจ้งเตือน LINE สำเร็จไปยัง ${userName}`);
@@ -611,15 +612,16 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return true;
         }
 
-        const errorDetail = jsonResponse?.error || jsonResponse?.message || rawText || `HTTP Status ${response.status}`;
-        console.warn(`[LINE Push Endpoint ${endpoint} Warning]: Status ${response.status}: ${errorDetail}`);
+        lastErrorDetail = jsonResponse?.error || jsonResponse?.message || rawText || `HTTP Status ${response.status}`;
+        console.warn(`[LINE Push Endpoint ${endpoint} Warning]: Status ${response.status}: ${lastErrorDetail}`);
       } catch (err: any) {
+        lastErrorDetail = err.message || String(err);
         console.warn(`[LINE Push Endpoint ${endpoint} Exception]:`, err);
       }
     }
 
     if (showDiagnosticAlert) {
-      window.alert(`เกิดข้อผิดพลาดในการส่ง LINE ผ่าน Vercel Serverless Function (โปรดตรวจสอบการตั้งค่า LINE Token ใน Vercel Environment Variables)`);
+      window.alert(`เกิดข้อผิดพลาดในการส่ง LINE: ${lastErrorDetail || 'โปรดตรวจสอบการเชื่อมต่อสัญญาณและ Token ในระบบ'}`);
     }
     return false;
   };
