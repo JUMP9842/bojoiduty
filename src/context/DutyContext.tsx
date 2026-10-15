@@ -104,6 +104,7 @@ interface DutyContextType {
   pendingLineProfile: { lineUserId: string; displayName: string; pictureUrl?: string } | null;
   setPendingLineProfile: (profile: { lineUserId: string; displayName: string; pictureUrl?: string } | null) => void;
   completeLineRegistration: (data: { displayName: string; icon: string; color: string }) => Promise<User | null>;
+  linkLineToExistingUser: (existingUserId: string) => Promise<User | null>;
   cancelPendingLineProfile: () => void;
   isLineFriendModalOpen: boolean;
   openLineFriendModal: () => void;
@@ -299,8 +300,28 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     setIsFirebaseSynced(true);
 
+    // Auto-check and trigger scheduled reminders (throttled once per 30 minutes in sessionStorage)
+    const checkScheduledReminders = async () => {
+      try {
+        const lastCheck = sessionStorage.getItem('last_reminders_trigger');
+        const now = Date.now();
+        if (!lastCheck || now - Number(lastCheck) > 1800000) {
+          sessionStorage.setItem('last_reminders_trigger', String(now));
+          await fetch(getApiUrl('/api/line/trigger-scheduled-reminders'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ force: false }),
+          }).catch(() => {});
+        }
+      } catch (err) {
+        console.warn('Scheduled reminders trigger notice:', err);
+      }
+    };
+    const remTimer = setTimeout(checkScheduledReminders, 4000);
+
     return () => {
       isMounted = false;
+      clearTimeout(remTimer);
       unsubUsers();
       unsubShifts();
       unsubTasks();
@@ -438,6 +459,16 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setBookingSettings(newSettings);
     safeSetDoc(doc(db, 'settings', 'booking_settings'), newSettings).catch(console.warn);
     addLog('unlock_schedule_update', `[Admin] กำหนดวันเปิดจองเดือน ${monthKey}: วันที่ ${openDate} เวลา ${openTime || '12:00'} น.`);
+
+    // Broadcast notification to all users connected to LINE
+    users.forEach((u) => {
+      if (u.lineUserId) {
+        sendLinePushNotification(
+          u.lineUserId,
+          `📢 [BojoiDuty] แอดมินได้ประกาศวันเปิดจองเวรประจำเดือน ${monthKey}!\n📅 วันที่เปิดจอง: ${openDate} เวลา ${openTime || '12:00'} น.`
+        );
+      }
+    });
   };
 
   const deleteMonthUnlockSchedule = async (monthKey: string) => {
@@ -483,7 +514,27 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // 1. Check if user already exists (by lineUserId) -> Login directly! Do not show registration screen again.
   // 2. If new user -> prompt screen to fill display name, choose icon, choose color -> Click complete.
   const loginWithLine = async (profile: { lineUserId: string; displayName: string; pictureUrl?: string }): Promise<{ isNewUser: boolean; user?: User }> => {
-    // Check in existing state
+    // 0. If user is currently logged in, link LINE to their current staff account immediately!
+    if (currentUserId) {
+      const activeUser = users.find((u) => u.id === currentUserId);
+      if (activeUser) {
+        const updatedUser: User = {
+          ...activeUser,
+          lineUserId: profile.lineUserId,
+          lineDisplayName: profile.displayName || activeUser.lineDisplayName,
+          linePictureUrl: profile.pictureUrl || activeUser.linePictureUrl,
+          avatar: profile.pictureUrl || activeUser.avatar,
+          lineConnectedAt: new Date().toISOString(),
+          lineNotificationEnabled: true,
+        };
+        setUsers((prev) => prev.map((u) => (u.id === currentUserId ? updatedUser : u)));
+        safeSetDoc(doc(db, 'users', currentUserId), updatedUser).catch(console.warn);
+        addLog('member_update', `เชื่อมต่อบัญชี ${activeUser.nickname || activeUser.name} กับ LINE OA เรียบร้อยแล้ว`, updatedUser);
+        return { isNewUser: false, user: updatedUser };
+      }
+    }
+
+    // 1. Check in existing state by lineUserId
     let user = users.find(
       (u) => (u.lineUserId && u.lineUserId === profile.lineUserId)
     );
@@ -513,6 +564,7 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
         linePictureUrl: profile.pictureUrl || user.linePictureUrl,
         avatar: profile.pictureUrl || user.avatar,
         lineConnectedAt: user.lineConnectedAt || new Date().toISOString(),
+        lineNotificationEnabled: true,
       };
       setUsers((prev) => {
         const exists = prev.some((u) => u.id === user!.id);
@@ -523,11 +575,34 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
       addLog('user_login', `เข้าสู่ระบบผ่าน LINE OA สำเร็จ (${user.name || profile.displayName})`, updatedUser);
       return { isNewUser: false, user: updatedUser };
     } else {
-      // New user! Set pending profile so the setup modal pops up:
-      // "เด้งกลับมาให้กรอกชื่อที่จะแสดง เลือกไอคอน เลือกสี (ถ้าหากเคยสมัครแล้วก้ไม่ต้องสมัครมาหน้านี้อีก) > เสร็จสิ้น"
+      // Unlinked/New user! Set pending profile so the setup modal pops up to either LINK to an existing staff account or create new profile
       setPendingLineProfile(profile);
       return { isNewUser: true };
     }
+  };
+
+  // Link LINE Account to an existing staff member in the system
+  const linkLineToExistingUser = async (existingUserId: string): Promise<User | null> => {
+    if (!pendingLineProfile) return null;
+    const targetUser = users.find((u) => u.id === existingUserId);
+    if (!targetUser) return null;
+
+    const updatedUser: User = {
+      ...targetUser,
+      lineUserId: pendingLineProfile.lineUserId,
+      lineDisplayName: pendingLineProfile.displayName || targetUser.lineDisplayName,
+      linePictureUrl: pendingLineProfile.pictureUrl || targetUser.linePictureUrl,
+      avatar: pendingLineProfile.pictureUrl || targetUser.avatar,
+      lineConnectedAt: new Date().toISOString(),
+      lineNotificationEnabled: true,
+    };
+
+    setUsers((prev) => prev.map((u) => (u.id === existingUserId ? updatedUser : u)));
+    setCurrentUserId(updatedUser.id);
+    await safeSetDoc(doc(db, 'users', updatedUser.id), updatedUser);
+    addLog('member_update', `เชื่อมต่อบัญชี ${updatedUser.nickname || updatedUser.name} กับ LINE OA เรียบร้อยแล้ว`, updatedUser);
+    setPendingLineProfile(null);
+    return updatedUser;
   };
 
   // Complete LINE Registration after user picks display name, icon, and color
@@ -944,11 +1019,31 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const targetShifts = shifts.filter((s) => s.date === date);
     if (targetShifts.length === 0) return false;
 
+    // Collect affected user IDs
+    const affectedUserIds = new Set<string>();
+    targetShifts.forEach((s) => {
+      if (s.userId) affectedUserIds.add(s.userId);
+      if (s.morningUserId) affectedUserIds.add(s.morningUserId);
+      if (s.eveningUserId) affectedUserIds.add(s.eveningUserId);
+    });
+
     setShifts((prev) => prev.filter((s) => s.date !== date));
     targetShifts.forEach((s) => {
       deleteDoc(doc(db, 'shifts', s.id)).catch(console.warn);
     });
     addLog('cancel_shift', `[Admin] ลบเวรทั้งหมดของวันที่ ${date} (${targetShifts.length} รายการ)`);
+
+    // Notify affected users
+    affectedUserIds.forEach((uId) => {
+      const u = users.find((x) => x.id === uId);
+      if (u && u.lineUserId) {
+        sendLinePushNotification(
+          u.lineUserId,
+          `📢 [BojoiDuty] แอดมินได้ยกเลิกตารางเวรทั้งหมดในวันที่ ${date}`
+        );
+      }
+    });
+
     return true;
   };
 
@@ -957,69 +1052,83 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
     type: 'daily' | 'bathing',
     part: 'morning' | 'evening' | 'full_day' | 'bathing' = 'full_day'
   ) => {
+    const affectedUserIds = new Set<string>();
+
     if (type === 'bathing' || part === 'bathing') {
       const bShifts = shifts.filter((s) => s.date === date && s.type === 'bathing');
       if (bShifts.length > 0) {
+        bShifts.forEach((s) => {
+          if (s.userId) affectedUserIds.add(s.userId);
+        });
         setShifts((prev) => prev.filter((s) => !(s.date === date && s.type === 'bathing')));
         bShifts.forEach((s) => deleteDoc(doc(db, 'shifts', s.id)).catch(console.warn));
         addLog('cancel_shift', `[Admin] ลบเวรอาบน้ำ วันที่ ${date}`);
       }
-      return;
-    }
+    } else {
+      // Daily shift
+      const dShift = shifts.find((s) => s.date === date && s.type === 'daily');
+      if (dShift) {
+        const currentMorning = getShiftMorningUserId(dShift);
+        const currentEvening = getShiftEveningUserId(dShift);
 
-    // Daily shift
-    const dShift = shifts.find((s) => s.date === date && s.type === 'daily');
-    if (!dShift) return;
+        if (part === 'full_day') {
+          if (currentMorning) affectedUserIds.add(currentMorning);
+          if (currentEvening) affectedUserIds.add(currentEvening);
+          if (dShift.userId) affectedUserIds.add(dShift.userId);
 
-    if (part === 'full_day') {
-      // Clear all daily shifts for this date
-      setShifts((prev) => prev.filter((s) => !(s.date === date && s.type === 'daily')));
-      const allDaily = shifts.filter((s) => s.date === date && s.type === 'daily');
-      allDaily.forEach((s) => deleteDoc(doc(db, 'shifts', s.id)).catch(console.warn));
-      addLog('cancel_shift', `[Admin] ลบเวรประจำวันทั้งหมด วันที่ ${date}`);
-      return;
-    }
+          setShifts((prev) => prev.filter((s) => !(s.date === date && s.type === 'daily')));
+          const allDaily = shifts.filter((s) => s.date === date && s.type === 'daily');
+          allDaily.forEach((s) => deleteDoc(doc(db, 'shifts', s.id)).catch(console.warn));
+          addLog('cancel_shift', `[Admin] ลบเวรประจำวันทั้งหมด วันที่ ${date}`);
+        } else if (part === 'morning') {
+          if (currentMorning) affectedUserIds.add(currentMorning);
 
-    const currentMorning = getShiftMorningUserId(dShift);
-    const currentEvening = getShiftEveningUserId(dShift);
+          if (!currentEvening) {
+            setShifts((prev) => prev.filter((s) => s.id !== dShift.id));
+            deleteDoc(doc(db, 'shifts', dShift.id)).catch(console.warn);
+          } else {
+            const cur: ShiftAssignment = {
+              ...dShift,
+              userId: currentEvening,
+              morningUserId: '',
+              eveningUserId: currentEvening,
+            };
+            setShifts((prev) => prev.map((s) => (s.id === cur.id ? cur : s)));
+            safeSetDoc(doc(db, 'shifts', cur.id), cur).catch(console.warn);
+          }
+          addLog('cancel_shift', `[Admin] ล้างเฉพาะเวรเช้า วันที่ ${date}`);
+        } else if (part === 'evening') {
+          if (currentEvening) affectedUserIds.add(currentEvening);
 
-    if (part === 'morning') {
-      // Clear morning slot
-      if (!currentEvening) {
-        // Evening is also unassigned -> deleting morning leaves no one, completely delete shift document
-        setShifts((prev) => prev.filter((s) => s.id !== dShift.id));
-        deleteDoc(doc(db, 'shifts', dShift.id)).catch(console.warn);
-      } else {
-        // Evening still assigned, mark morning as explicitly empty string ''
-        const cur: ShiftAssignment = {
-          ...dShift,
-          userId: currentEvening,
-          morningUserId: '',
-          eveningUserId: currentEvening,
-        };
-        setShifts((prev) => prev.map((s) => (s.id === cur.id ? cur : s)));
-        safeSetDoc(doc(db, 'shifts', cur.id), cur).catch(console.warn);
+          if (!currentMorning) {
+            setShifts((prev) => prev.filter((s) => s.id !== dShift.id));
+            deleteDoc(doc(db, 'shifts', dShift.id)).catch(console.warn);
+          } else {
+            const cur: ShiftAssignment = {
+              ...dShift,
+              userId: currentMorning,
+              morningUserId: currentMorning,
+              eveningUserId: '',
+            };
+            setShifts((prev) => prev.map((s) => (s.id === cur.id ? cur : s)));
+            safeSetDoc(doc(db, 'shifts', cur.id), cur).catch(console.warn);
+          }
+          addLog('cancel_shift', `[Admin] ล้างเฉพาะเวรเย็น วันที่ ${date}`);
+        }
       }
-      addLog('cancel_shift', `[Admin] ล้างเฉพาะเวรเช้า วันที่ ${date}`);
-    } else if (part === 'evening') {
-      // Clear evening slot
-      if (!currentMorning) {
-        // Morning is also unassigned -> deleting evening leaves no one, completely delete shift document
-        setShifts((prev) => prev.filter((s) => s.id !== dShift.id));
-        deleteDoc(doc(db, 'shifts', dShift.id)).catch(console.warn);
-      } else {
-        // Morning still assigned, mark evening as explicitly empty string ''
-        const cur: ShiftAssignment = {
-          ...dShift,
-          userId: currentMorning,
-          morningUserId: currentMorning,
-          eveningUserId: '',
-        };
-        setShifts((prev) => prev.map((s) => (s.id === cur.id ? cur : s)));
-        safeSetDoc(doc(db, 'shifts', cur.id), cur).catch(console.warn);
-      }
-      addLog('cancel_shift', `[Admin] ล้างเฉพาะเวรเย็น วันที่ ${date}`);
     }
+
+    // Send LINE notifications to cleared/cancelled users
+    affectedUserIds.forEach((uId) => {
+      const u = users.find((x) => x.id === uId);
+      if (u && u.lineUserId) {
+        const partText = part === 'morning' ? 'เวรเช้า' : part === 'evening' ? 'เวรเย็น' : part === 'bathing' ? 'เวรอาบน้ำ' : 'เวรประจำวัน';
+        sendLinePushNotification(
+          u.lineUserId,
+          `📢 [BojoiDuty] แอดมินได้ยกเลิก/ปรับเปลี่ยนเวรของคุณ\n📅 วันที่: ${date}\n📌 รายละเอียด: ${partText}`
+        );
+      }
+    });
   };
 
   const cancelShift = (shiftId: string): boolean => {
@@ -1207,6 +1316,16 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setAnnouncements((prev) => [newAnn, ...prev]);
     safeSetDoc(doc(db, 'announcements', newAnn.id), newAnn).catch(console.warn);
     addLog('announcement_create', `เพิ่มประกาศใหม่: "${title}"`);
+
+    // Broadcast announcement notification to all users with LINE account
+    users.forEach((u) => {
+      if (u.lineUserId) {
+        sendLinePushNotification(
+          u.lineUserId,
+          `📢 [ประกาศใหม่จาก BojoiDuty]\n📌 หัวข้อ: ${title}\n📝 รายละเอียด: ${content}\n📅 มีผลวันที่: ${date}`
+        );
+      }
+    });
   };
 
   const deleteAnnouncement = async (id: string) => {
@@ -1249,6 +1368,14 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUsers((prev) => prev.map((u) => (u.id === updatedUser.id ? updatedUser : u)));
     safeSetDoc(doc(db, 'users', updatedUser.id), updatedUser).catch(console.warn);
     addLog('member_update', `อัปเดตข้อมูลสมาชิก: ${updatedUser.name}`);
+
+    // Notify user of profile/role updates by admin
+    if (updatedUser.lineUserId) {
+      sendLinePushNotification(
+        updatedUser.lineUserId,
+        `📢 [BojoiDuty] แอดมินได้ทำการอัปเดตข้อมูลโปรไฟล์/สิทธิ์การใช้งานของคุณเรียบร้อยแล้ว`
+      );
+    }
   };
 
   const deleteUser = async (id: string) => {
@@ -1268,8 +1395,15 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setCurrentUserId(nextUser ? nextUser.id : null);
       if (!nextUser) localStorage.removeItem('bojoiduty_current_user_id');
     }
+
     if (user) {
       addLog('member_update', `[Admin] ลบบัญชีผู้ใช้: ${user.username || user.name}`);
+      if (user.lineUserId) {
+        sendLinePushNotification(
+          user.lineUserId,
+          `📢 [BojoiDuty] บัญชีผู้ใช้ของคุณถูกปรับเปลี่ยนหรือลบออกจากระบบโดยแอดมิน`
+        );
+      }
     }
   };
 
@@ -1281,6 +1415,7 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return y !== year || m !== month + 1;
     })];
 
+    const generatedShifts: ShiftAssignment[] = [];
     let userIndex = 0;
     for (let day = 1; day <= daysInMonth; day++) {
       const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -1294,12 +1429,29 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
         createdAt: new Date().toISOString(),
       };
       newShifts.push(newShift);
+      generatedShifts.push(newShift);
       await safeSetDoc(doc(db, 'shifts', newShift.id), newShift).catch(console.warn);
       userIndex++;
     }
 
     setShifts(newShifts);
     addLog('auto_distribute', `จัดสรรเวรทั้งเดือน ${month + 1}/${year} ให้อัตโนมัติเท่ากันทุกคน (${users.length} คน)`);
+
+    // Group assigned count by user and notify each user
+    const userShiftCount = new Map<string, number>();
+    generatedShifts.forEach((s) => {
+      if (s.userId) userShiftCount.set(s.userId, (userShiftCount.get(s.userId) || 0) + 1);
+    });
+
+    userShiftCount.forEach((count, uId) => {
+      const u = users.find((x) => x.id === uId);
+      if (u && u.lineUserId) {
+        sendLinePushNotification(
+          u.lineUserId,
+          `📢 [BojoiDuty] แอดมินได้จัดสรรเวรอัตโนมัติสำหรับเดือน ${month + 1}/${year} เรียบร้อยแล้ว!\n📌 คุณได้รับการจัดสรรเวรทั้งหมด ${count} วัน สามารถเข้าเช็คตารางบนระบบได้เลยครับ`
+        );
+      }
+    });
   };
 
   const resetToDefaultData = async () => {
@@ -1425,6 +1577,7 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
         pendingLineProfile,
         setPendingLineProfile,
         completeLineRegistration,
+        linkLineToExistingUser,
         cancelPendingLineProfile,
         isLineFriendModalOpen,
         openLineFriendModal,

@@ -14,16 +14,26 @@ import {
   Bell,
   ArrowRight,
   ShieldCheck,
+  UserCheck,
+  UserPlus,
 } from 'lucide-react';
 import { AVAILABLE_COLORS, AVAILABLE_ICONS } from '../data/initialData';
 import { LINE_OA_INFO } from '../utils/lineAuthUtils';
 
 export const LineProfileSetupModal: React.FC = () => {
-  const { pendingLineProfile, completeLineRegistration, cancelPendingLineProfile } = useDuty();
+  const {
+    pendingLineProfile,
+    users,
+    completeLineRegistration,
+    linkLineToExistingUser,
+    cancelPendingLineProfile,
+  } = useDuty();
 
   const [step, setStep] = useState<'profile' | 'add_friend'>('profile');
+  const [profileMode, setProfileMode] = useState<'existing' | 'new'>('existing');
+  const [selectedExistingUserId, setSelectedExistingUserId] = useState<string>('');
   const [displayName, setDisplayName] = useState('');
-  const [selectedIcon, setSelectedIcon] = useState(AVAILABLE_ICONS[3] || '🐶'); // Default to dog
+  const [selectedIcon, setSelectedIcon] = useState(AVAILABLE_ICONS[3] || '🐶');
   const [selectedColor, setSelectedColor] = useState(AVAILABLE_COLORS[0]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -34,7 +44,10 @@ export const LineProfileSetupModal: React.FC = () => {
     color: string;
   } | null>(null);
 
-  // Sync default display name whenever a new pending profile arrives
+  // Unlinked existing users who don't have lineUserId attached yet
+  const unlinkedExistingUsers = users.filter((u) => !u.lineUserId);
+
+  // Sync state whenever a new pending profile arrives
   useEffect(() => {
     if (pendingLineProfile) {
       setStep('profile');
@@ -43,35 +56,65 @@ export const LineProfileSetupModal: React.FC = () => {
       setSelectedColor(AVAILABLE_COLORS[0]);
       setSelectedIcon(AVAILABLE_ICONS[3] || '🐶');
       setErrorMsg(null);
+
+      // Default to 'existing' if unlinked users exist, otherwise default to 'new'
+      const unlinked = users.filter((u) => !u.lineUserId);
+      if (unlinked.length > 0) {
+        setProfileMode('existing');
+        setSelectedExistingUserId(unlinked[0].id);
+      } else {
+        setProfileMode('new');
+      }
     }
-  }, [pendingLineProfile]);
+  }, [pendingLineProfile, users]);
 
   if (!pendingLineProfile && !completedUser) return null;
 
   const handleSubmitProfile = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanName = displayName.trim();
-    if (!cleanName) {
-      setErrorMsg('กรุณากรอกชื่อที่จะแสดงในระบบ');
-      return;
-    }
-
     setIsSubmitting(true);
     setErrorMsg(null);
 
     try {
-      const user = await completeLineRegistration({
-        displayName: cleanName,
-        icon: selectedIcon,
-        color: selectedColor,
-      });
+      if (profileMode === 'existing') {
+        if (!selectedExistingUserId) {
+          setErrorMsg('กรุณาเลือกรายชื่อสมาชิกในระบบที่ต้องการเชื่อมต่อ');
+          setIsSubmitting(false);
+          return;
+        }
+
+        const linkedUser = await linkLineToExistingUser(selectedExistingUserId);
+        if (!linkedUser) {
+          throw new Error('ไม่สามารถเชื่อมต่อกับรายชื่อสมาชิกที่เลือกได้');
+        }
+
+        setCompletedUser({
+          displayName: linkedUser.nickname || linkedUser.name,
+          icon: linkedUser.icon || '🐶',
+          color: linkedUser.color || AVAILABLE_COLORS[0],
+        });
+      } else {
+        const cleanName = displayName.trim();
+        if (!cleanName) {
+          setErrorMsg('กรุณากรอกชื่อที่จะแสดงในระบบ');
+          setIsSubmitting(false);
+          return;
+        }
+
+        const newUser = await completeLineRegistration({
+          displayName: cleanName,
+          icon: selectedIcon,
+          color: selectedColor,
+        });
+
+        setCompletedUser({
+          displayName: cleanName,
+          icon: selectedIcon,
+          color: selectedColor,
+        });
+      }
 
       // Transition to Step 2: Prompt to Add LINE OA Friend
-      setCompletedUser({
-        displayName: cleanName,
-        icon: selectedIcon,
-        color: selectedColor,
-      });
       setStep('add_friend');
       setIsSubmitting(false);
     } catch (err: any) {
@@ -151,19 +194,19 @@ export const LineProfileSetupModal: React.FC = () => {
                 <Sparkles className="w-3 h-3 text-amber-200" />
                 <span>
                   {step === 'profile'
-                    ? 'ขั้นตอน 1/2: ตั้งค่าโปรไฟล์บัญชี'
+                    ? 'ขั้นตอน 1/2: ตั้งค่า / เชื่อมต่อบัญชี'
                     : 'ขั้นตอน 2/2: เพิ่มเพื่อน LINE OA'}
                 </span>
               </div>
               <h2 className="text-lg font-black tracking-tight leading-tight">
                 {step === 'profile'
-                  ? 'ตั้งค่าโปรไฟล์บัญชีของคุณ'
+                  ? 'เชื่อมต่อบัญชีเข้ากับตารางเวร'
                   : 'เพิ่มเพื่อน LINE Official Account'}
               </h2>
               <p className="text-xs text-emerald-100 opacity-90 mt-0.5">
                 {step === 'profile'
-                  ? `เชื่อมต่อจาก LINE: ${pendingLineProfile?.displayName || 'สมาชิกใหม่'}`
-                  : `สมัครสำเร็จแล้ว! ยินดีต้อนรับคุณ ${completedUser?.displayName}`}
+                  ? `เข้าสู่ระบบผ่าน LINE: ${pendingLineProfile?.displayName || 'สมาชิกใหม่'}`
+                  : `เชื่อมต่อสำเร็จ! ยินดีต้อนรับคุณ ${completedUser?.displayName}`}
               </p>
             </div>
           </div>
@@ -171,117 +214,171 @@ export const LineProfileSetupModal: React.FC = () => {
 
         {/* Modal Body */}
         {step === 'profile' ? (
-          /* STEP 1: Profile Customization */
-          <form onSubmit={handleSubmitProfile} className="p-5 sm:p-6 space-y-5 overflow-y-auto flex-1">
+          /* STEP 1: Profile Customization or Link to Existing Staff */
+          <form onSubmit={handleSubmitProfile} className="p-5 sm:p-6 space-y-4 overflow-y-auto flex-1">
             {errorMsg && (
               <div className="p-3 rounded-2xl bg-red-50 border border-red-200 text-red-700 text-xs font-semibold animate-in fade-in">
                 {errorMsg}
               </div>
             )}
 
-            {/* 1. Display Name */}
-            <div>
-              <label className="block text-xs font-black text-neutral-800 mb-1.5 flex items-center justify-between">
-                <span>1. ชื่อที่จะแสดงในระบบ (Display Name) *</span>
-                <span className="text-[10px] text-neutral-400 font-normal">แก้ไขตามต้องการได้</span>
-              </label>
-              <div className="relative">
-                <UserIcon className="w-4 h-4 text-neutral-400 absolute left-3.5 top-3" />
-                <input
-                  type="text"
-                  required
-                  maxLength={30}
-                  placeholder="กรอกชื่อที่จะแสดง เช่น น้องบีม, พี่ต้น..."
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2.5 text-sm rounded-2xl bg-neutral-50 border-2 border-neutral-200 focus:bg-white focus:border-[#06C755] focus:outline-hidden font-bold text-neutral-900 shadow-inner transition-colors"
-                  autoFocus
-                />
-              </div>
-            </div>
-
-            {/* 2. Choose Icon */}
-            <div>
-              <label className="block text-xs font-black text-neutral-800 mb-1.5 flex items-center justify-between">
-                <span>2. เลือกไอคอนประจำตัว (Choose Icon) *</span>
-                <span className="text-[10px] text-neutral-500 font-bold">เลือกไอคอนที่ชอบ</span>
-              </label>
-              <div className="grid grid-cols-8 gap-2 p-3 bg-neutral-50 rounded-2xl border border-neutral-200 max-h-36 overflow-y-auto">
-                {AVAILABLE_ICONS.map((icon) => {
-                  const isSelected = selectedIcon === icon;
-                  return (
-                    <button
-                      key={icon}
-                      type="button"
-                      onClick={() => setSelectedIcon(icon)}
-                      className={`aspect-square rounded-xl flex items-center justify-center text-xl transition-all cursor-pointer ${
-                        isSelected
-                          ? 'bg-white border-2 border-[#06C755] shadow-md scale-110 ring-2 ring-emerald-200'
-                          : 'bg-white/80 border border-neutral-200 hover:bg-white hover:scale-105'
-                      }`}
-                    >
-                      <span>{icon}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* 3. Choose Color */}
-            <div>
-              <label className="block text-xs font-black text-neutral-800 mb-1.5 flex items-center justify-between">
-                <span>3. เลือกสีประจำตัว (Choose Color) *</span>
-                <span className="text-[10px] text-neutral-500 font-bold">สีของเวรคุณบนปฏิทิน</span>
-              </label>
-              <div className="flex items-center gap-2.5 flex-wrap p-3 bg-neutral-50 rounded-2xl border border-neutral-200">
-                {AVAILABLE_COLORS.map((col) => {
-                  const isSelected = selectedColor === col;
-                  return (
-                    <button
-                      key={col}
-                      type="button"
-                      onClick={() => setSelectedColor(col)}
-                      className={`w-7 h-7 rounded-full transition-all cursor-pointer flex items-center justify-center ${
-                        isSelected
-                          ? 'scale-125 ring-3 ring-neutral-900 shadow-md border-2 border-white'
-                          : 'hover:scale-110 border border-black/10'
-                      }`}
-                      style={{ backgroundColor: col }}
-                      title={col}
-                    >
-                      {isSelected && <span className="text-white text-[10px] font-black">✓</span>}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Live Preview Card */}
-            <div className="p-3.5 rounded-2xl bg-gradient-to-r from-neutral-50 to-[#FFF8EE] border border-neutral-200">
-              <span className="text-[10px] font-black text-neutral-500 block mb-2 uppercase tracking-wider">
-                ตัวอย่างบัตรของคุณที่จะแสดงในปฏิทินเวร:
-              </span>
-              <div
-                className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-xl border-2 shadow-xs transition-all"
-                style={{
-                  backgroundColor: `${selectedColor}18`,
-                  borderColor: `${selectedColor}60`,
-                  color: '#171717',
-                }}
+            {/* Selection Mode Toggle */}
+            <div className="p-1 rounded-2xl bg-neutral-100 border border-neutral-200 grid grid-cols-2 gap-1">
+              <button
+                type="button"
+                onClick={() => setProfileMode('existing')}
+                className={`py-2 px-3 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                  profileMode === 'existing'
+                    ? 'bg-white text-emerald-700 shadow-sm border border-emerald-200'
+                    : 'text-neutral-500 hover:text-neutral-800'
+                }`}
               >
-                <span className="text-base">{selectedIcon}</span>
-                <span
-                  className="w-2.5 h-2.5 rounded-full"
-                  style={{ backgroundColor: selectedColor }}
-                />
-                <span className="font-extrabold text-xs">
-                  {displayName.trim() || 'ชื่อที่จะแสดง'}
-                </span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-white/80 font-bold text-neutral-600 border border-neutral-200">
-                  LINE OA
-                </span>
-              </div>
+                <UserCheck className="w-3.5 h-3.5" />
+                <span>1. เชื่อมกับชื่อสมาชิกเดิมในระบบ</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setProfileMode('new')}
+                className={`py-2 px-3 rounded-xl text-xs font-extrabold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                  profileMode === 'new'
+                    ? 'bg-white text-emerald-700 shadow-sm border border-emerald-200'
+                    : 'text-neutral-500 hover:text-neutral-800'
+                }`}
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                <span>2. สร้างสมาชิกใหม่</span>
+              </button>
             </div>
+
+            {profileMode === 'existing' ? (
+              /* Option 1: Select Existing Unlinked User */
+              <div className="space-y-3">
+                <div className="p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-medium leading-relaxed">
+                  💡 เลือกชื่อของคุณที่ผู้ดูแลระบบได้ใส่ไว้ในตารางเวรแล้ว เพื่อให้การแจ้งเตือนเตือนเวรและโน้ตส่งไปยัง LINE ของคุณโดยตรง
+                </div>
+
+                {unlinkedExistingUsers.length > 0 ? (
+                  <div>
+                    <label className="block text-xs font-black text-neutral-800 mb-2">
+                      เลือกรายชื่อของคุณในระบบ BojoiDuty:
+                    </label>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1">
+                      {unlinkedExistingUsers.map((u) => {
+                        const isSelected = selectedExistingUserId === u.id;
+                        return (
+                          <button
+                            key={u.id}
+                            type="button"
+                            onClick={() => setSelectedExistingUserId(u.id)}
+                            className={`p-3 rounded-2xl border-2 text-left transition-all cursor-pointer flex items-center gap-3 ${
+                              isSelected
+                                ? 'bg-emerald-50/80 border-[#06C755] shadow-md ring-2 ring-emerald-200'
+                                : 'bg-neutral-50 border-neutral-200 hover:bg-white hover:border-neutral-300'
+                            }`}
+                          >
+                            <span className="text-2xl shrink-0">{u.icon || '🐶'}</span>
+                            <div className="flex-1 min-w-0">
+                              <div className="font-extrabold text-xs text-neutral-900 truncate">
+                                {u.nickname || u.name}
+                              </div>
+                              <div className="text-[10px] text-neutral-500 font-medium">
+                                บทบาท: {u.role === 'admin' ? 'ผู้ดูแลระบบ' : 'สมาชิก'}
+                              </div>
+                            </div>
+                            {isSelected && (
+                              <CheckCircle2 className="w-4 h-4 text-[#06C755] shrink-0" />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="p-4 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-bold text-center">
+                    ไม่มีรายชื่อสมาชิกที่ยังไม่ได้เชื่อมต่อในระบบ สามารถเลือกปุ่ม "สร้างสมาชิกใหม่" ด้านบนได้เลยครับ
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* Option 2: Create Brand New User */
+              <div className="space-y-4">
+                {/* 1. Display Name */}
+                <div>
+                  <label className="block text-xs font-black text-neutral-800 mb-1 flex items-center justify-between">
+                    <span>ชื่อที่จะแสดงในระบบ (Display Name) *</span>
+                    <span className="text-[10px] text-neutral-400 font-normal">แก้ไขได้</span>
+                  </label>
+                  <div className="relative">
+                    <UserIcon className="w-4 h-4 text-neutral-400 absolute left-3.5 top-3" />
+                    <input
+                      type="text"
+                      required
+                      maxLength={30}
+                      placeholder="กรอกชื่อที่จะแสดง เช่น น้องบีม, พี่ต้น..."
+                      value={displayName}
+                      onChange={(e) => setDisplayName(e.target.value)}
+                      className="w-full pl-10 pr-4 py-2.5 text-sm rounded-2xl bg-neutral-50 border-2 border-neutral-200 focus:bg-white focus:border-[#06C755] focus:outline-hidden font-bold text-neutral-900 shadow-inner transition-colors"
+                      autoFocus
+                    />
+                  </div>
+                </div>
+
+                {/* 2. Choose Icon */}
+                <div>
+                  <label className="block text-xs font-black text-neutral-800 mb-1 flex items-center justify-between">
+                    <span>เลือกไอคอนประจำตัว *</span>
+                  </label>
+                  <div className="grid grid-cols-8 gap-2 p-2.5 bg-neutral-50 rounded-2xl border border-neutral-200 max-h-28 overflow-y-auto">
+                    {AVAILABLE_ICONS.map((icon) => {
+                      const isSelected = selectedIcon === icon;
+                      return (
+                        <button
+                          key={icon}
+                          type="button"
+                          onClick={() => setSelectedIcon(icon)}
+                          className={`aspect-square rounded-xl flex items-center justify-center text-lg transition-all cursor-pointer ${
+                            isSelected
+                              ? 'bg-white border-2 border-[#06C755] shadow-md scale-110 ring-2 ring-emerald-200'
+                              : 'bg-white/80 border border-neutral-200 hover:bg-white'
+                          }`}
+                        >
+                          <span>{icon}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 3. Choose Color */}
+                <div>
+                  <label className="block text-xs font-black text-neutral-800 mb-1 flex items-center justify-between">
+                    <span>เลือกสีประจำตัว *</span>
+                  </label>
+                  <div className="flex items-center gap-2 flex-wrap p-2.5 bg-neutral-50 rounded-2xl border border-neutral-200">
+                    {AVAILABLE_COLORS.map((col) => {
+                      const isSelected = selectedColor === col;
+                      return (
+                        <button
+                          key={col}
+                          type="button"
+                          onClick={() => setSelectedColor(col)}
+                          className={`w-6 h-6 rounded-full transition-all cursor-pointer flex items-center justify-center ${
+                            isSelected
+                              ? 'scale-125 ring-2 ring-neutral-900 shadow-md border-2 border-white'
+                              : 'hover:scale-110 border border-black/10'
+                          }`}
+                          style={{ backgroundColor: col }}
+                        >
+                          {isSelected && <span className="text-white text-[9px] font-black">✓</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Action Buttons */}
             <div className="pt-2 flex items-center gap-3">
@@ -306,7 +403,7 @@ export const LineProfileSetupModal: React.FC = () => {
                   </>
                 ) : (
                   <>
-                    <span>บันทึกและไปขั้นตอนเพิ่มเพื่อน</span>
+                    <span>{profileMode === 'existing' ? 'เชื่อมต่อบัญชีแล้วไปเพิ่มเพื่อน' : 'บันทึกโปรไฟล์แล้วไปเพิ่มเพื่อน'}</span>
                     <ArrowRight className="w-4 h-4" />
                   </>
                 )}
@@ -330,7 +427,7 @@ export const LineProfileSetupModal: React.FC = () => {
               <div className="flex-1 min-w-0">
                 <span className="inline-flex items-center gap-1 text-[11px] font-extrabold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded-full border border-emerald-300 mb-0.5">
                   <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                  <span>บันทึกโปรไฟล์เรียบร้อยแล้ว</span>
+                  <span>บันทึกและเชื่อมต่อบัญชีเรียบร้อยแล้ว</span>
                 </span>
                 <h3 className="text-sm font-extrabold text-neutral-900 truncate">
                   ยินดีต้อนรับคุณ {completedUser?.displayName}
@@ -343,10 +440,10 @@ export const LineProfileSetupModal: React.FC = () => {
               <Bell className="w-4 h-4 text-amber-600 shrink-0 mt-0.5 animate-bounce" />
               <div>
                 <p className="font-extrabold text-neutral-900 mb-0.5">
-                  ขั้นตอนสุดท้าย: เพิ่มเพื่อน LINE Official Account
+                  ขั้นตอนสำคัญ: เพิ่มเพื่อน LINE Official Account
                 </p>
                 <p className="text-[11px] text-neutral-700 leading-normal">
-                  กรุณากดเพิ่มเพื่อนหรือสแกน QR Code ด้านล่างนี้ เพื่อให้บอท BojoiDuty สามารถส่งการแจ้งเตือนตารางเวรและการแจ้งเตือนด่วนไปยัง LINE ของคุณได้โดยตรง
+                  กรุณากดเพิ่มเพื่อนหรือสแกน QR Code ด้านล่างนี้ เพื่อให้บอท BojoiDuty สามารถส่งข้อความและแจ้งเตือนตารางเวรของคุณไปยัง LINE ได้โดยตรง
                 </p>
               </div>
             </div>

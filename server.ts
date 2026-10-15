@@ -584,6 +584,30 @@ app.post(['/api/line/webhook', '/line/webhook'], async (req, res) => {
     const hostUrl = `${req.protocol}://${req.get('host')}`;
 
     for (const event of events) {
+      // 1. Follow event (เมื่อเพื่อนกดเพิ่มเพื่อนบอท LINE OA หรือปลดบล็อก)
+      if (event.type === 'follow' && event.replyToken && lineConfig.lineAccessToken) {
+        const publicSite = lineConfig.publicSiteUrl || 'https://bojoiduty.vercel.app';
+        const welcomeText =
+          `🐶 สวัสดีครับ! ขอบคุณที่เพิ่มเพื่อน BojoiDuty (@090puwgd)\n\n` +
+          `บอทนี้จะคอยส่งการแจ้งเตือนตารางเวรน้องหมาให้คุณโดยอัตโนมัติ (เตือนล่วงหน้า 3 วัน, 1 วัน, และในวันที่มีเวร)\n\n` +
+          `👉 เพื่อเชื่อมต่อบัญชีเวรของคุณกับ LINE OA กรุณาเปิดเว็บแล้วกด "Login LINE" หรือ "เชื่อมต่อ LINE":\n` +
+          `${publicSite}\n\n` +
+          `✨ เมื่อเชื่อมต่อแล้ว คุณจะได้รับการแจ้งเตือนเวรและสามารถพิมพ์สอบถามเวรได้ตลอด 24 ชม. ครับ!`;
+
+        await fetch('https://api.line.me/v2/bot/message/reply', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${lineConfig.lineAccessToken}`,
+          },
+          body: JSON.stringify({
+            replyToken: event.replyToken,
+            messages: [{ type: 'text', text: welcomeText, quickReply: getLineQuickReplyItems() }],
+          }),
+        }).catch((e) => console.warn('[Follow Event Reply Notice]:', e.message));
+        continue;
+      }
+
       if (event.type === 'message' && event.replyToken && lineConfig.lineAccessToken) {
         if (event.message?.type === 'text') {
           const userRawText = (event.message.text || '').trim();
@@ -1033,11 +1057,23 @@ async function checkAndSendScheduledReminders(forceRun: boolean = false) {
       announcementText = '• ไม่มีประกาศใหม่ในวันนี้ สามารถเข้าดูปฏิทินในระบบได้ครับ';
     }
 
-    const reminderTargets = [
-      { dateStr: todayStr, code: 'D0', label: '🚨 แจ้งเตือนเวรของคุณวันนี้!' },
-      { dateStr: in1DayStr, code: 'D1', label: '🌙 แจ้งเตือนเวรวันพรุ่งนี้ (อีก 1 วัน)!' },
-      { dateStr: in3DaysStr, code: 'D3', label: '📅 แจ้งเตือนเวรล่วงหน้าอีก 3 วัน!' },
+    // Get current hour in Thailand Timezone (Asia/Bangkok)
+    const nowThai = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }));
+    const currentHour = nowThai.getHours();
+
+    // Default scheduled time windows:
+    // D0 (Today): Morning 08:00 (7:00 - 10:00)
+    // D1 (Tomorrow / 1 day away): Evening 20:00 (18:00 - 22:00)
+    // D3 (3 days away): Noon 12:00 (11:00 - 14:00)
+    const allTargets = [
+      { dateStr: todayStr, code: 'D0', label: '🚨 แจ้งเตือนเวรของคุณวันนี้!', targetHourRange: [7, 11] },
+      { dateStr: in1DayStr, code: 'D1', label: '🌙 แจ้งเตือนเวรวันพรุ่งนี้ (อีก 1 วัน)!', targetHourRange: [18, 23] },
+      { dateStr: in3DaysStr, code: 'D3', label: '📅 แจ้งเตือนเวรล่วงหน้าอีก 3 วัน!', targetHourRange: [11, 15] },
     ];
+
+    const reminderTargets = forceRun
+      ? allTargets
+      : allTargets.filter(t => currentHour >= t.targetHourRange[0] && currentHour <= t.targetHourRange[1]);
 
     let sentCount = 0;
     const results: string[] = [];

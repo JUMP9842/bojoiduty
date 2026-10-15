@@ -30,8 +30,8 @@ export const LineCallbackHandler: React.FC = () => {
         setUserName(res.user.name || profile.displayName || 'สมาชิก');
         setMessage(`เข้าสู่ระบบผ่าน LINE สำเร็จ! ยินดีต้อนรับคุณ ${res.user.name || profile.displayName}`);
 
-        // If user is not yet friends with the official account, prompt Add Friend modal
-        if (profile.isFriend === false) {
+        // If user is not yet friends with the official account (isFriend is false or unconfirmed), prompt Add Friend modal
+        if (profile.isFriend !== true) {
           openLineFriendModal();
         }
 
