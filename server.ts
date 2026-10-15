@@ -1,11 +1,8 @@
 import express from 'express';
-import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import localtunnel from 'localtunnel';
-import { tunnelmole } from 'tunnelmole';
 import fs from 'fs';
-import { initializeApp } from 'firebase/app';
+import { initializeApp, getApps } from 'firebase/app';
 import { getFirestore, collection, getDocs, doc, setDoc } from 'firebase/firestore';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -25,23 +22,43 @@ let tunnelStatus = {
 };
 
 // Initialize Firestore for server-side LINE OA queries
+const FALLBACK_FIREBASE_CONFIG = {
+  projectId: 'feisty-quasar-q53bd',
+  appId: '1:388800385483:web:6cf3b76992d27ecb89a64e',
+  apiKey: 'AIzaSyDkCS6LtGhrk0kU8WSfwDcMOv1QXexyrAg',
+  authDomain: 'feisty-quasar-q53bd.firebaseapp.com',
+  firestoreDatabaseId: 'ai-studio-pawsduty-53653dc7-02ef-4c8b-a749-e32b6a62213f',
+  storageBucket: 'feisty-quasar-q53bd.firebasestorage.app',
+  messagingSenderId: '388800385483',
+};
+
 let serverDb: any = null;
 try {
+  let firebaseConfig = FALLBACK_FIREBASE_CONFIG;
   let cfgPath = path.join(__dirname, 'firebase-applet-config.json');
   if (!fs.existsSync(cfgPath)) {
     cfgPath = path.join(process.cwd(), 'firebase-applet-config.json');
   }
   if (fs.existsSync(cfgPath)) {
-    const firebaseConfig = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-    const fApp = initializeApp(firebaseConfig, 'server-app');
-    serverDb = getFirestore(fApp, firebaseConfig.firestoreDatabaseId);
-    console.log('✅ Connected Firestore in server.ts');
+    firebaseConfig = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
   }
+  const existingApps = getApps();
+  const fApp = existingApps.find(a => a.name === 'server-app') || initializeApp(firebaseConfig, 'server-app');
+  serverDb = getFirestore(fApp, firebaseConfig.firestoreDatabaseId);
+  console.log('✅ Connected Firestore in server.ts');
 } catch (e: any) {
   console.warn('⚠️ Server Firestore init notice:', e.message);
 }
 
 app.use(express.json());
+
+// Normalize rewritten paths in serverless environments (if /api prefix is stripped by Vercel rewrite)
+app.use((req, res, next) => {
+  if (req.url.startsWith('/auth/line/') || req.url.startsWith('/line/')) {
+    req.url = '/api' + req.url;
+  }
+  next();
+});
 
 // 1. Enable CORS for dual domain routing (ais-dev Express Container vs ais-pre Static CDN)
 app.use((req, res, next) => {
@@ -134,7 +151,7 @@ async function removeInvalidLineSubscriber(lineUserId: string) {
 }
 
 // API: Get LINE OA Config & Webhook status
-app.get('/api/line/config', (req, res) => {
+app.get(['/api/line/config', '/line/config'], (req, res) => {
   res.json({
     hasChannelId: !!lineConfig.lineChannelId,
     hasChannelSecret: !!lineConfig.lineChannelSecret,
@@ -156,12 +173,12 @@ app.get('/api/line/config', (req, res) => {
   });
 });
 
-app.get('/api/line/tunnel-status', (req, res) => {
+app.get(['/api/line/tunnel-status', '/line/tunnel-status'], (req, res) => {
   res.json(tunnelStatus);
 });
 
 // API: Update LINE OA Config
-app.post('/api/line/config', async (req, res) => {
+app.post(['/api/line/config', '/line/config'], async (req, res) => {
   const { lineChannelId, lineChannelSecret, lineAccessToken, liffId, publicSiteUrl } = req.body;
 
   if (lineChannelId !== undefined) lineConfig.lineChannelId = lineChannelId.trim();
@@ -186,7 +203,7 @@ app.post('/api/line/config', async (req, res) => {
   });
 });
 
-app.get('/api/line/login-url', (req, res) => {
+app.get(['/api/line/login-url', '/line/login-url'], (req, res) => {
   const reqHost = (req.get('x-forwarded-host') || req.get('host') || '').trim();
   const reqProto = (req.get('x-forwarded-proto') || req.protocol || 'https').trim();
   const serverOrigin = reqHost ? `${reqProto}://${reqHost}` : DEV_SERVER_URL;
@@ -440,12 +457,12 @@ async function handleLineOAuthCallback(req: express.Request, res: express.Respon
   }
 }
 
-app.get('/api/auth/line/callback', handleLineOAuthCallback);
-app.get('/api/line/callback', handleLineOAuthCallback);
-app.post('/api/line/callback', handleLineOAuthCallback);
+app.get(['/api/auth/line/callback', '/auth/line/callback'], handleLineOAuthCallback);
+app.get(['/api/line/callback', '/line/callback'], handleLineOAuthCallback);
+app.post(['/api/line/callback', '/line/callback'], handleLineOAuthCallback);
 
 // API: LINE Messaging API Webhook (รองรับการ Verify Webhook จาก LINE Developers Console และการตอบกลับ)
-app.get('/api/line/webhook', (req, res) => {
+app.get(['/api/line/webhook', '/line/webhook'], (req, res) => {
   res.status(200).send('BojoiDuty LINE Webhook endpoint is active and ready.');
 });
 
@@ -517,7 +534,7 @@ function getLineQuickReplyItems() {
 }
 
 // API: LINE Messaging API Webhook (รองรับการ Verify Webhook และการพิมพ์โต้ตอบถามเวร)
-app.post('/api/line/webhook', async (req, res) => {
+app.post(['/api/line/webhook', '/line/webhook'], async (req, res) => {
   try {
     const events = req.body?.events || [];
     console.log(`[LINE Webhook]: Received ${events.length} event(s)`);
@@ -803,7 +820,7 @@ app.post('/api/line/webhook', async (req, res) => {
 });
 
 // API: Send Push Notification via Messaging API
-app.post('/api/line/push-notification', async (req, res) => {
+app.post(['/api/line/push-notification', '/line/push-notification'], async (req, res) => {
   try {
     const { targetUserId, messageText, flexMessage } = req.body;
 
@@ -873,7 +890,7 @@ app.post('/api/line/push-notification', async (req, res) => {
 });
 
 // API: Test LINE Connection
-app.post('/api/line/test-notification', async (req, res) => {
+app.post(['/api/line/test-notification', '/line/test-notification'], async (req, res) => {
   try {
     const { testUserId } = req.body;
     if (!lineConfig.lineAccessToken) {
@@ -1076,7 +1093,7 @@ async function checkAndSendScheduledReminders(forceRun: boolean = false) {
 }
 
 // API: Trigger Scheduled Reminders (D-3, D-1, Today + Announcements)
-app.post('/api/line/trigger-scheduled-reminders', async (req, res) => {
+app.post(['/api/line/trigger-scheduled-reminders', '/line/trigger-scheduled-reminders'], async (req, res) => {
   const force = req.body?.force === true;
   const result = await checkAndSendScheduledReminders(force);
   res.json(result);
@@ -1085,11 +1102,17 @@ app.post('/api/line/trigger-scheduled-reminders', async (req, res) => {
 // Start Express server with Vite in Development mode
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
+    try {
+      const vitePkg = 'vite';
+      const { createServer: createViteServer } = await import(/* @vite-ignore */ vitePkg);
+      const vite = await createViteServer({
+        server: { middlewareMode: true },
+        appType: 'spa',
+      });
+      app.use(vite.middlewares);
+    } catch (err: any) {
+      console.warn('⚠️ Vite middleware dynamic import notice:', err.message);
+    }
   } else {
     app.use(express.static(path.join(__dirname, 'dist')));
     app.get('*', (req, res) => {
@@ -1127,6 +1150,8 @@ async function startServer() {
 async function startTunnel() {
   try {
     console.log('🚀 Starting Tunnelmole tunnel for LINE Webhook (No 302 Redirects)...');
+    const tmPkg = 'tunnelmole';
+    const { tunnelmole } = await import(/* @vite-ignore */ tmPkg);
     const url = await tunnelmole({ port: Number(PORT) });
     if (url && typeof url === 'string' && url.startsWith('http')) {
       const httpsUrl = url.startsWith('http:') ? url.replace('http:', 'https:') : url;
@@ -1152,6 +1177,8 @@ async function startTunnel() {
 
 async function startLocalTunnel() {
   try {
+    const ltPkg = 'localtunnel';
+    const { default: localtunnel } = await import(/* @vite-ignore */ ltPkg);
     const tunnel = await localtunnel({
       port: Number(PORT),
       subdomain: LOCALTUNNEL_SUBDOMAIN,
@@ -1187,7 +1214,20 @@ async function startLocalTunnel() {
   }
 }
 
-if (!process.env.VERCEL) {
+// Global error handler so any unhandled route error responds with JSON instead of crashing Vercel function
+app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  console.error('Express Server Global Error:', err);
+  if (res.headersSent) {
+    return next(err);
+  }
+  res.status(500).json({
+    error: 'Internal server error',
+    message: err?.message || String(err),
+  });
+});
+
+const isServerless = !!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME || process.env.NOW_REGION);
+if (!isServerless) {
   startServer();
 }
 
