@@ -250,53 +250,89 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
     initSeed();
 
-    const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
-      if (isMounted) {
-        setUsers(snap.docs.map((d) => d.data() as User));
-      }
-    });
+    const onSnapErr = (name: string) => (err: Error) => {
+      console.warn(`[Firestore Sync] onSnapshot stream notice (${name}) - reconnecting:`, err.message);
+    };
 
-    const unsubShifts = onSnapshot(collection(db, 'shifts'), (snap) => {
-      if (isMounted) {
-        const items = snap.docs.map((d) => d.data() as ShiftAssignment);
-        setShifts(items);
-      }
-    });
+    const unsubUsers = onSnapshot(
+      collection(db, 'users'),
+      (snap) => {
+        if (isMounted) {
+          setUsers(snap.docs.map((d) => d.data() as User));
+        }
+      },
+      onSnapErr('users')
+    );
 
-    const unsubTasks = onSnapshot(collection(db, 'calendar_tasks'), (snap) => {
-      if (isMounted) {
-        const items = snap.docs.map((d) => d.data() as CalendarTaskNote);
-        setCalendarTasks(items);
-      }
-    });
+    const unsubShifts = onSnapshot(
+      collection(db, 'shifts'),
+      (snap) => {
+        if (isMounted) {
+          const items = snap.docs.map((d) => d.data() as ShiftAssignment);
+          setShifts(items);
+        }
+      },
+      onSnapErr('shifts')
+    );
 
-    const unsubBathing = onSnapshot(collection(db, 'bathing_schedules'), (snap) => {
-      if (isMounted) {
-        const items = snap.docs.map((d) => d.data() as BathingScheduleConfig);
-        setBathingSchedules(items);
-      }
-    });
+    const unsubTasks = onSnapshot(
+      collection(db, 'calendar_tasks'),
+      (snap) => {
+        if (isMounted) {
+          const items = snap.docs.map((d) => d.data() as CalendarTaskNote);
+          setCalendarTasks(items);
+        }
+      },
+      onSnapErr('calendar_tasks')
+    );
 
-    const unsubAnnouncements = onSnapshot(collection(db, 'announcements'), (snap) => {
-      if (isMounted) setAnnouncements(snap.docs.map((d) => d.data() as Announcement));
-    });
+    const unsubBathing = onSnapshot(
+      collection(db, 'bathing_schedules'),
+      (snap) => {
+        if (isMounted) {
+          const items = snap.docs.map((d) => d.data() as BathingScheduleConfig);
+          setBathingSchedules(items);
+        }
+      },
+      onSnapErr('bathing_schedules')
+    );
 
-    const unsubSwaps = onSnapshot(collection(db, 'swap_requests'), (snap) => {
-      if (isMounted) setSwapRequests(snap.docs.map((d) => d.data() as SwapRequest));
-    });
+    const unsubAnnouncements = onSnapshot(
+      collection(db, 'announcements'),
+      (snap) => {
+        if (isMounted) setAnnouncements(snap.docs.map((d) => d.data() as Announcement));
+      },
+      onSnapErr('announcements')
+    );
 
-    const unsubLogs = onSnapshot(collection(db, 'activity_logs'), (snap) => {
-      if (isMounted) {
-        const items = snap.docs.map((d) => d.data() as ActivityLog);
-        setActivityLogs(items.sort((a, b) => b.timestamp.localeCompare(a.timestamp)));
-      }
-    });
+    const unsubSwaps = onSnapshot(
+      collection(db, 'swap_requests'),
+      (snap) => {
+        if (isMounted) setSwapRequests(snap.docs.map((d) => d.data() as SwapRequest));
+      },
+      onSnapErr('swap_requests')
+    );
 
-    const unsubSettings = onSnapshot(doc(db, 'settings', 'booking_settings'), (docSnap) => {
-      if (docSnap.exists() && isMounted) {
-        setBookingSettings(docSnap.data() as BookingSettings);
-      }
-    });
+    const unsubLogs = onSnapshot(
+      collection(db, 'activity_logs'),
+      (snap) => {
+        if (isMounted) {
+          const items = snap.docs.map((d) => d.data() as ActivityLog);
+          setActivityLogs(items.sort((a, b) => b.timestamp.localeCompare(a.timestamp)));
+        }
+      },
+      onSnapErr('activity_logs')
+    );
+
+    const unsubSettings = onSnapshot(
+      doc(db, 'settings', 'booking_settings'),
+      (docSnap) => {
+        if (docSnap.exists() && isMounted) {
+          setBookingSettings(docSnap.data() as BookingSettings);
+        }
+      },
+      onSnapErr('booking_settings')
+    );
 
     setIsFirebaseSynced(true);
 
@@ -368,65 +404,138 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   // Helper to send LINE Push Notification via Messaging API (Backend Proxy - No CORS)
-  const sendLinePushNotification = async (targetUserId: string, messageText: string): Promise<boolean> => {
-    if (!targetUserId) {
-      console.warn('[LINE Push Skip] ไม่ได้ระบุ targetUserId');
+  const sendLinePushNotification = async (
+    targetUserIdOrName: string,
+    messageText: string,
+    showDiagnosticAlert: boolean = true
+  ): Promise<boolean> => {
+    if (!targetUserIdOrName) {
+      if (showDiagnosticAlert) {
+        window.alert('ไม่พบ LINE ID ของผู้ใช้ (ไม่ได้ระบุชื่อผู้ใช้หรือ ID) (ข้อมูลผู้ใช้ที่ดึงได้คือ: null)');
+      }
       return false;
     }
 
-    // Resolve targetUserId locally if nickname, name, or internal user ID was passed
-    const cleanTarget = targetUserId.trim().toLowerCase();
-    const matchedUser = users.find(
-      (u) =>
-        u.id === targetUserId ||
-        (u.lineUserId && u.lineUserId === targetUserId) ||
-        u.username.toLowerCase() === cleanTarget ||
-        u.name.toLowerCase() === cleanTarget ||
-        (u.nickname && u.nickname.toLowerCase() === cleanTarget)
-    );
+    const cleanTarget = targetUserIdOrName.trim();
+    const cleanTargetLower = cleanTarget.toLowerCase();
 
-    // Requirement 1: Check lineUserId from Database/State first. If empty, skip without throwing error
-    const lineUserId = matchedUser?.lineUserId || (targetUserId.startsWith('U') && targetUserId.length >= 30 ? targetUserId : null);
+    // 1. Search in local state users comparing id, uid, lineUserId, name, nickname, username
+    let matchedUser: User | undefined = users.find((u) => {
+      const uAny = u as any;
+      return (
+        u.id === cleanTarget ||
+        uAny.uid === cleanTarget ||
+        u.lineUserId === cleanTarget ||
+        (u.username && u.username.toLowerCase() === cleanTargetLower) ||
+        (u.name && u.name.toLowerCase() === cleanTargetLower) ||
+        (u.nickname && u.nickname.toLowerCase() === cleanTargetLower)
+      );
+    });
+
+    // 2. If not found in state or matchedUser does not have lineUserId, fetch fresh from Firestore 'users' collection
+    if (!matchedUser || !matchedUser.lineUserId) {
+      try {
+        const snap = await getDocs(collection(db, 'users'));
+        const freshUsers = snap.docs.map((d) => ({ id: d.id, ...d.data() }) as any);
+        const freshMatched = freshUsers.find((u: any) => {
+          return (
+            u.id === cleanTarget ||
+            u.uid === cleanTarget ||
+            u.lineUserId === cleanTarget ||
+            (u.username && u.username.toLowerCase() === cleanTargetLower) ||
+            (u.name && u.name.toLowerCase() === cleanTargetLower) ||
+            (u.nickname && u.nickname.toLowerCase() === cleanTargetLower) ||
+            (u.username && u.username.toLowerCase().includes(cleanTargetLower)) ||
+            (u.name && u.name.toLowerCase().includes(cleanTargetLower)) ||
+            (u.nickname && u.nickname.toLowerCase().includes(cleanTargetLower))
+          );
+        });
+
+        if (freshMatched) {
+          matchedUser = freshMatched as User;
+        }
+      } catch (err) {
+        console.warn('Firestore fresh user fetch notice:', err);
+      }
+    }
+
+    // 3. Resolve lineUserId
+    const lineUserId =
+      matchedUser?.lineUserId ||
+      (cleanTarget.startsWith('U') && cleanTarget.length >= 30 ? cleanTarget : null);
+
+    const userName = matchedUser
+      ? matchedUser.nickname || matchedUser.name || matchedUser.username
+      : cleanTarget;
+
     if (!lineUserId) {
-      const uLabel = matchedUser ? `${matchedUser.nickname || matchedUser.name || matchedUser.username}` : targetUserId;
-      console.warn(`[LINE Push Skip] ผู้ใช้ "${uLabel}" ยังไม่ได้เชื่อมต่อ lineUserId ในระบบ (ข้ามการส่งแจ้งเตือน)`);
+      console.warn(`[LINE Push Diagnostic] ไม่พบ LINE ID ของผู้ใช้ ${cleanTarget}`);
+      if (showDiagnosticAlert) {
+        window.alert(
+          `ไม่พบ LINE ID ของผู้ใช้ ${userName || cleanTarget} (ข้อมูลผู้ใช้ที่ดึงได้คือ: ${JSON.stringify(matchedUser || null)})`
+        );
+      }
       return false;
     }
 
     // Requirement 4: Debug console.log before sending
     console.log(`[LINE Push Sending] Target LINE User ID: ${lineUserId} | Message: "${messageText}"`);
 
+    // 4. Send via Server Proxy endpoint to prevent CORS
     try {
-      // Requirement 2: Send data through backend API Route (/api/line/push-notification) to prevent CORS
-      let res = await fetch(getApiUrl('/api/line/push-notification'), {
+      const payload = {
+        targetUserId: lineUserId,
+        lineUserId: lineUserId,
+        to: lineUserId,
+        messageText: messageText,
+        messages: [{ type: 'text', text: messageText }],
+      };
+
+      let res = await fetch(getApiUrl('/api/line-push'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ targetUserId: lineUserId, messageText }),
-      });
-      let data = await res.json().catch(() => null);
+        body: JSON.stringify(payload),
+      }).catch(() => null);
 
-      if (!res.ok || !data) {
-        const fallbackUrl = 'https://ais-dev-olsgx3yczrx7ghc5qkwxao-603131036827.asia-southeast1.run.app/api/line/push-notification';
+      if (!res || !res.ok) {
+        res = await fetch(getApiUrl('/api/line/push-notification'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }).catch(() => null);
+      }
+
+      if (!res || !res.ok) {
+        const fallbackUrl = 'https://ais-dev-olsgx3yczrx7ghc5qkwxao-603131036827.asia-southeast1.run.app/api/line-push';
         res = await fetch(fallbackUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ targetUserId: lineUserId, messageText }),
-        });
-        data = await res.json().catch(() => null);
+          body: JSON.stringify(payload),
+        }).catch(() => null);
       }
 
-      if (res.ok && data?.success) {
-        console.log(`[LINE Push Success]: Delivered to ${lineUserId} (${data?.recipientName || ''})`);
+      const data = res ? await res.json().catch(() => null) : null;
+      const httpStatus = res ? res.status : 0;
+
+      if (res && res.ok && data?.success) {
+        console.log(`[LINE Push Success]: Delivered to ${userName} (${lineUserId})`);
+        if (showDiagnosticAlert) {
+          window.alert(`ส่งแจ้งเตือน LINE สำเร็จไปยัง ${userName} (LINE ID: ${lineUserId})`);
+        }
         return true;
       } else {
-        // Requirement 4: Detailed Error Message in console.error
-        const errMsg = data?.error || res.statusText || 'Unknown LINE Push Error';
-        console.error(`[LINE Push API Error]: Failed to send to ${lineUserId}. Cause:`, errMsg);
+        const errMsg = data?.error || (res ? res.statusText : 'Network Exception or Proxy Unreachable');
+        console.error(`[LINE Push API Error] Status: ${httpStatus} | Error:`, errMsg);
+        if (showDiagnosticAlert) {
+          window.alert(`เกิดข้อผิดพลาดในการส่ง LINE (Status ${httpStatus}): ${errMsg}`);
+        }
         return false;
       }
     } catch (err: any) {
-      // Requirement 4: Detailed Error Message in console.error
-      console.error(`[LINE Push API Error]: Network/Server exception when pushing to ${lineUserId}:`, err.message || err);
+      console.error(`[LINE Push Network Exception]`, err);
+      if (showDiagnosticAlert) {
+        window.alert(`เกิดข้อผิดพลาดในการส่ง LINE: ${err.message || String(err)}`);
+      }
       return false;
     }
   };
@@ -1062,18 +1171,14 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     addLog('member_update', `[Admin] มอบหมายเวร ${type} (${part}) วันที่ ${date} ให้แก่ ${targetUser.username || targetUser.name}`);
 
-    // Requirement 1 & 3: Check lineUserId & send formatted push message
-    if (!targetUser.lineUserId) {
-      console.warn(`[LINE Push Skip] ผู้ใช้ "${targetUser.nickname || targetUser.name || targetUser.username}" (ID: ${userId}) ยังไม่มี lineUserId ผูกกับบัญชี ข้ามการส่งแจ้งเตือน`);
-    } else {
-      const shiftPartText = part === 'morning' ? 'กะเช้า' : part === 'evening' ? 'กะเย็น' : type === 'bathing' ? 'เวรอาบน้ำ' : 'เต็มวัน';
-      const formattedDate = formatDateDisplay(date);
-      const msg = isEdit
-        ? `✏️ แจ้งเตือนการแก้ไขเวร: เวรของคุณในวันที่ ${formattedDate} ถูกปรับเปลี่ยนเป็นช่วงเวลา ${shiftPartText} โดย Admin`
-        : `📅 แจ้งเตือนเวรใหม่: คุณได้รับมอบหมายเวรวันที่ ${formattedDate} ช่วงเวลา ${shiftPartText} โดย Admin`;
+    // Requirement 1, 2, 3, 4, 5: Send push notification with diagnostic window.alert()
+    const shiftPartText = part === 'morning' ? 'กะเช้า' : part === 'evening' ? 'กะเย็น' : type === 'bathing' ? 'เวรอาบน้ำ' : 'เต็มวัน';
+    const formattedDate = formatDateDisplay(date);
+    const msg = isEdit
+      ? `✏️ แจ้งเตือนการแก้ไขเวร: เวรของคุณในวันที่ ${formattedDate} ถูกปรับเปลี่ยนเป็นช่วงเวลา ${shiftPartText} โดย Admin`
+      : `📅 แจ้งเตือนเวรใหม่: คุณได้รับมอบหมายเวรวันที่ ${formattedDate} ช่วงเวลา ${shiftPartText} โดย Admin`;
 
-      sendLinePushNotification(targetUser.lineUserId, msg);
-    }
+    sendLinePushNotification(userId, msg, true);
 
     return true;
   };
@@ -1100,17 +1205,11 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
     addLog('cancel_shift', `[Admin] ลบเวรทั้งหมดของวันที่ ${date} (${targetShifts.length} รายการ)`);
 
-    // Requirement 1 & 3: Notify affected users with formatted cancel message
+    // Requirement 1, 2, 3, 4, 5: Notify affected users with diagnostic window.alert()
     affectedUserIds.forEach((uId) => {
-      const u = users.find((x) => x.id === uId);
-      if (!u) return;
-      if (!u.lineUserId) {
-        console.warn(`[LINE Push Skip] ผู้ใช้ "${u.nickname || u.name || u.username}" (ID: ${uId}) ยังไม่มี lineUserId ผูกกับบัญชี ข้ามการส่งแจ้งเตือน`);
-        return;
-      }
       const formattedDate = formatDateDisplay(date);
       const msg = `❌ แจ้งเตือนยกเลิกเวร: เวรของคุณในวันที่ ${formattedDate} ถูกยกเลิกโดย Admin`;
-      sendLinePushNotification(u.lineUserId, msg);
+      sendLinePushNotification(uId, msg, true);
     });
 
     return true;
@@ -1187,18 +1286,12 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    // Requirement 1 & 3: Send LINE notifications to cleared/cancelled users
+    // Requirement 1, 2, 3, 4, 5: Send LINE notifications to cleared/cancelled users with diagnostic window.alert()
     affectedUserIds.forEach((uId) => {
-      const u = users.find((x) => x.id === uId);
-      if (!u) return;
-      if (!u.lineUserId) {
-        console.warn(`[LINE Push Skip] ผู้ใช้ "${u.nickname || u.name || u.username}" (ID: ${uId}) ยังไม่มี lineUserId ผูกกับบัญชี ข้ามการส่งแจ้งเตือน`);
-        return;
-      }
       const partText = part === 'morning' ? 'กะเช้า' : part === 'evening' ? 'กะเย็น' : part === 'bathing' ? 'เวรอาบน้ำ' : 'เต็มวัน';
       const formattedDate = formatDateDisplay(date);
       const msg = `❌ แจ้งเตือนยกเลิกเวร: เวรของคุณในวันที่ ${formattedDate} ช่วงเวลา ${partText} ถูกยกเลิกโดย Admin`;
-      sendLinePushNotification(u.lineUserId, msg);
+      sendLinePushNotification(uId, msg, true);
     });
   };
 
@@ -1218,18 +1311,12 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
       `ยกเลิกเวร${shift.type === 'daily' ? 'ประจำวัน' : 'อาบน้ำ'} วันที่ ${shift.date}`
     );
 
-    // Requirement 1 & 3: Notify cancelled shift users
+    // Requirement 1, 2, 3, 4, 5: Notify cancelled shift users with diagnostic window.alert()
     affectedUserIds.forEach((uId) => {
-      const u = users.find((x) => x.id === uId);
-      if (!u) return;
-      if (!u.lineUserId) {
-        console.warn(`[LINE Push Skip] ผู้ใช้ "${u.nickname || u.name || u.username}" (ID: ${uId}) ยังไม่มี lineUserId ผูกกับบัญชี ข้ามการส่งแจ้งเตือน`);
-        return;
-      }
       const partText = shift.type === 'bathing' ? 'เวรอาบน้ำ' : 'เวรประจำวัน';
       const formattedDate = formatDateDisplay(shift.date);
       const msg = `❌ แจ้งเตือนยกเลิกเวร: เวรของคุณในวันที่ ${formattedDate} ช่วงเวลา ${partText} ถูกยกเลิกโดย Admin`;
-      sendLinePushNotification(u.lineUserId, msg);
+      sendLinePushNotification(uId, msg, true);
     });
 
     return true;

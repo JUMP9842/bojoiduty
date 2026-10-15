@@ -1,0 +1,17 @@
+[build]
+  functions = "netlify/functions"
+
+[[redirects]]
+  from = "/api/line-push"
+  to = "/.netlify/functions/line-push"
+  status = 200
+
+[[redirects]]
+  from = "/api/line/push-notification"
+  to = "/.netlify/functions/line-push"
+  status = 200
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

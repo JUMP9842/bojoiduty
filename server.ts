@@ -906,6 +906,7 @@ async function resolveLineUserIdFromTarget(targetUserId: string): Promise<{ line
     const matchedUser = allUsers.find(
       (u: any) =>
         u.id === cleanTarget ||
+        u.uid === cleanTarget ||
         (u.lineUserId && u.lineUserId === cleanTarget) ||
         (u.username && u.username.toLowerCase() === queryClean) ||
         (u.name && u.name.toLowerCase() === queryClean) ||
@@ -939,7 +940,7 @@ async function resolveLineUserIdFromTarget(targetUserId: string): Promise<{ line
 }
 
 // API: Send Push Notification via Messaging API
-app.post(['/api/line/push-notification', '/line/push-notification'], async (req, res) => {
+app.post(['/api/line/push-notification', '/line/push-notification', '/api/line-push', '/line-push'], async (req, res) => {
   try {
     const { targetUserId, messageText, flexMessage } = req.body;
 
