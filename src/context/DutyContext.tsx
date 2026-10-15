@@ -150,8 +150,8 @@ interface DutyContextType {
     endAt?: string,
     lineNotifyOnPublish?: boolean,
     lineNotifyScheduledAt?: string[]
-  ) => void;
-  updateAnnouncement: (announcement: Announcement) => void;
+  ) => Promise<Announcement>;
+  updateAnnouncement: (announcement: Announcement) => Promise<Announcement>;
   deleteAnnouncement: (id: string) => void;
   activityLogs: ActivityLog[];
   clearActivityLogs: () => void;
@@ -1554,7 +1554,7 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
     endAt?: string,
     lineNotifyOnPublish?: boolean,
     lineNotifyScheduledAt?: string[]
-  ) => {
+  ): Promise<Announcement> => {
     const newAnn: Announcement = {
       id: 'ann-' + Date.now(),
       title,
@@ -1571,45 +1571,16 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
       lineNotifyScheduledAt: lineNotifyScheduledAt || [],
     };
     setAnnouncements((prev) => [newAnn, ...prev]);
-    safeSetDoc(doc(db, 'announcements', newAnn.id), newAnn).catch(console.warn);
+    await safeSetDoc(doc(db, 'announcements', newAnn.id), newAnn).catch(console.warn);
     addLog('announcement_create', `เพิ่มประกาศใหม่: "${title}"`);
-
-    // Compute eligible recipients with active LINE OA ID
-    const recipientUserIds = users
-      .filter((u) => u.lineUserId && u.lineUserId.startsWith('U') && u.lineNotificationEnabled !== false)
-      .map((u) => u.lineUserId as string);
-
-    // Trigger server-side LINE notification evaluation
-    safeFetchJson(getApiUrl('/api/line/announcement-notify'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        announcementId: newAnn.id,
-        announcement: newAnn,
-        recipientUserIds,
-      }),
-    }).catch(console.warn);
+    return newAnn;
   };
 
-  const updateAnnouncement = async (updatedAnn: Announcement) => {
+  const updateAnnouncement = async (updatedAnn: Announcement): Promise<Announcement> => {
     setAnnouncements((prev) => prev.map((a) => (a.id === updatedAnn.id ? updatedAnn : a)));
-    safeSetDoc(doc(db, 'announcements', updatedAnn.id), updatedAnn).catch(console.warn);
+    await safeSetDoc(doc(db, 'announcements', updatedAnn.id), updatedAnn).catch(console.warn);
     addLog('announcement_update', `ปรับปรุงประกาศ: "${updatedAnn.title}"`);
-
-    const recipientUserIds = users
-      .filter((u) => u.lineUserId && u.lineUserId.startsWith('U') && u.lineNotificationEnabled !== false)
-      .map((u) => u.lineUserId as string);
-
-    // Trigger server-side LINE notification evaluation
-    safeFetchJson(getApiUrl('/api/line/announcement-notify'), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        announcementId: updatedAnn.id,
-        announcement: updatedAnn,
-        recipientUserIds,
-      }),
-    }).catch(console.warn);
+    return updatedAnn;
   };
 
   const deleteAnnouncement = async (id: string) => {

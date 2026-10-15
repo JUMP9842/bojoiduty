@@ -1136,12 +1136,13 @@ export async function processAnnouncementLineNotifications(opts?: {
 
     const now = Date.now();
 
-    // Filter active announcements: not before startAt, not after endAt
+    // Filter active announcements: not before startAt (with 2 min skew tolerance), not after endAt
     const activeAnnouncements = announcements.filter((ann) => {
       if (opts?.force) return true; // Forced admin send always active
       const startTs = ann.startAt ? Date.parse(ann.startAt) : 0;
       const endTs = ann.endAt ? Date.parse(ann.endAt) : Infinity;
-      return now >= startTs && now <= endTs;
+      // Allow 2-minute grace period for clock skew between user device and server
+      return (now + 120000) >= startTs && now <= endTs;
     });
 
     const jobs: Array<{
@@ -1166,7 +1167,8 @@ export async function processAnnouncementLineNotifications(opts?: {
           const slotTs = Date.parse(slotAt.trim());
           const startTs = ann.startAt ? Date.parse(ann.startAt) : 0;
           const endTs = ann.endAt ? Date.parse(ann.endAt) : Infinity;
-          if (opts?.force || (!isNaN(slotTs) && slotTs <= now && slotTs >= startTs && slotTs <= endTs)) {
+          // Slot is due if slotTs <= now + 2 mins (clock skew) and within start/end window
+          if (opts?.force || (!isNaN(slotTs) && slotTs <= (now + 120000) && (slotTs + 120000) >= startTs && slotTs <= endTs)) {
             jobs.push({
               ann,
               logId: `${ann.id}__sched__${slotTs}`,

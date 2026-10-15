@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useDuty } from '../context/DutyContext';
 import { Announcement } from '../types';
 import { getApiUrl, safeFetchJson } from '../utils/apiUtils';
@@ -17,6 +17,8 @@ import {
   Bell,
   Send,
   Loader2,
+  Sparkles,
+  Zap,
 } from 'lucide-react';
 
 export const AnnouncementBoard: React.FC = () => {
@@ -45,8 +47,11 @@ export const AnnouncementBoard: React.FC = () => {
 
   // LINE Notification settings
   const [enableLineNotify, setEnableLineNotify] = useState<boolean>(true);
-  const [sendTimingMode, setSendTimingMode] = useState<'immediate' | 'scheduled'>('immediate');
-  const [scheduledSendTime, setScheduledSendTime] = useState<string>(''); // Main scheduled send time
+  // 'immediate' = Send now on publish
+  // 'on_start' = Send automatically when startAt arrives
+  // 'custom' = Admin picks specific date/time for LINE message
+  const [sendTimingMode, setSendTimingMode] = useState<'immediate' | 'on_start' | 'custom'>('immediate');
+  const [scheduledSendTime, setScheduledSendTime] = useState<string>(''); // For custom send time
   const [additionalSlots, setAdditionalSlots] = useState<string[]>([]); // Extra reminder times
   const [extraSlotInput, setExtraSlotInput] = useState<string>('');
   const [slotError, setSlotError] = useState<string | null>(null);
@@ -66,10 +71,10 @@ export const AnnouncementBoard: React.FC = () => {
     return () => clearInterval(timer);
   }, []);
 
-  // Auto clear feedback banner after 6 seconds
+  // Auto clear feedback banner after 7 seconds
   useEffect(() => {
     if (feedback) {
-      const t = setTimeout(() => setFeedback(null), 6000);
+      const t = setTimeout(() => setFeedback(null), 7000);
       return () => clearTimeout(t);
     }
   }, [feedback]);
@@ -113,6 +118,16 @@ export const AnnouncementBoard: React.FC = () => {
     }
   };
 
+  // Helper to format Date object into YYYY-MM-DDTHH:mm for datetime-local inputs
+  const toInputDatetimeStr = (date: Date): string => {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    const h = String(date.getHours()).padStart(2, '0');
+    const min = String(date.getMinutes()).padStart(2, '0');
+    return `${y}-${m}-${d}T${h}:${min}`;
+  };
+
   const formatDisplayTime = (isoStr?: string) => {
     if (!isoStr) return '';
     try {
@@ -128,6 +143,61 @@ export const AnnouncementBoard: React.FC = () => {
     } catch {
       return isoStr;
     }
+  };
+
+  // Quick Preset Handlers for Start Time (เวลาเริ่มประกาศ)
+  const handlePresetStartNow = () => {
+    setStartAtInput(toInputDatetimeStr(new Date()));
+  };
+  const handlePresetStartToday = (hour: number) => {
+    const d = new Date();
+    d.setHours(hour, 0, 0, 0);
+    setStartAtInput(toInputDatetimeStr(d));
+  };
+  const handlePresetStartTomorrow = (hour: number) => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    d.setHours(hour, 0, 0, 0);
+    setStartAtInput(toInputDatetimeStr(d));
+  };
+  const handlePresetStartAddHours = (hours: number) => {
+    const base = startAtInput ? new Date(startAtInput) : new Date();
+    base.setTime(base.getTime() + hours * 3600 * 1000);
+    setStartAtInput(toInputDatetimeStr(base));
+  };
+  const handleClearStart = () => {
+    setStartAtInput('');
+  };
+
+  // Quick Preset Handlers for End Time (ระยะเวลาแสดงประกาศ)
+  const handlePresetEndAddDays = (days: number) => {
+    const base = startAtInput ? new Date(startAtInput) : new Date();
+    const end = new Date(base.getTime() + days * 24 * 3600 * 1000);
+    setEndAtInput(toInputDatetimeStr(end));
+  };
+  const handleClearEnd = () => {
+    setEndAtInput('');
+  };
+
+  // Quick Preset Handlers for Custom LINE Send Time
+  const handlePresetLineSendNow = () => {
+    setScheduledSendTime(toInputDatetimeStr(new Date()));
+  };
+  const handlePresetLineSendToday = (hour: number) => {
+    const d = new Date();
+    d.setHours(hour, 0, 0, 0);
+    setScheduledSendTime(toInputDatetimeStr(d));
+  };
+  const handlePresetLineSendTomorrow = (hour: number) => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    d.setHours(hour, 0, 0, 0);
+    setScheduledSendTime(toInputDatetimeStr(d));
+  };
+  const handlePresetLineSendAddHours = (hours: number) => {
+    const base = scheduledSendTime ? new Date(scheduledSendTime) : new Date();
+    base.setTime(base.getTime() + hours * 3600 * 1000);
+    setScheduledSendTime(toInputDatetimeStr(base));
   };
 
   const handleOpenNewForm = () => {
@@ -163,15 +233,15 @@ export const AnnouncementBoard: React.FC = () => {
     const isNotifyEnabled = item.lineNotifyOnPublish !== false || (!!item.lineNotifyScheduledAt && item.lineNotifyScheduledAt.length > 0);
     setEnableLineNotify(!!isNotifyEnabled);
 
-    // If startAt is in the future or has scheduled slots
+    // Determine timing mode from announcement
     const scheduledList = item.lineNotifyScheduledAt || [];
     if (scheduledList.length > 0) {
-      setSendTimingMode('scheduled');
+      setSendTimingMode('custom');
       setScheduledSendTime(formatIsoToInput(scheduledList[0]));
       setAdditionalSlots(scheduledList.slice(1).map((s) => formatIsoToInput(s)));
     } else if (item.startAt && new Date(item.startAt).getTime() > Date.now()) {
-      setSendTimingMode('scheduled');
-      setScheduledSendTime(formatIsoToInput(item.startAt));
+      setSendTimingMode('on_start');
+      setScheduledSendTime('');
       setAdditionalSlots([]);
     } else {
       setSendTimingMode('immediate');
@@ -232,16 +302,17 @@ export const AnnouncementBoard: React.FC = () => {
     let finalStartIso = formatInputToThaiIso(startAtInput);
     const finalEndIso = formatInputToThaiIso(endAtInput);
 
-    // If user selected "scheduled" send time but startAtInput was empty, sync startAt with scheduledSendTime
-    if (enableLineNotify && sendTimingMode === 'scheduled') {
+    // If user selected "on_start" mode but startAtInput was empty, set startAt to now
+    if (enableLineNotify && sendTimingMode === 'on_start' && !finalStartIso) {
+      finalStartIso = formatInputToThaiIso(toInputDatetimeStr(new Date()));
+    }
+
+    // If user selected "custom" mode, validate scheduledSendTime
+    if (enableLineNotify && sendTimingMode === 'custom') {
       if (!scheduledSendTime || !scheduledSendTime.trim()) {
         setFormError('กรุณาเลือกวันและเวลาที่ต้องการให้ส่ง LINE ในช่องที่ระบุ');
         setIsSubmitting(false);
         return;
-      }
-      const schedIso = formatInputToThaiIso(scheduledSendTime);
-      if (!finalStartIso && schedIso) {
-        finalStartIso = schedIso;
       }
     }
 
@@ -258,7 +329,7 @@ export const AnnouncementBoard: React.FC = () => {
 
     // Compile lineNotifyScheduledAt list
     const scheduledListIso: string[] = [];
-    if (enableLineNotify && sendTimingMode === 'scheduled' && scheduledSendTime) {
+    if (enableLineNotify && sendTimingMode === 'custom' && scheduledSendTime) {
       const iso = formatInputToThaiIso(scheduledSendTime);
       if (iso) scheduledListIso.push(iso);
     }
@@ -269,7 +340,7 @@ export const AnnouncementBoard: React.FC = () => {
       }
     }
 
-    // Validate that scheduled times do not exceed endAt if endAt is set
+    // Validate scheduled slots do not exceed endAt if endAt is set
     if (finalEndIso) {
       const endTs = new Date(finalEndIso).getTime();
       const exceeding = scheduledListIso.find((s) => new Date(s).getTime() > endTs);
@@ -280,27 +351,33 @@ export const AnnouncementBoard: React.FC = () => {
       }
     }
 
-    const lineNotifyOnPublish = enableLineNotify && sendTimingMode === 'immediate';
+    // Determine lineNotifyOnPublish
+    // If 'immediate' or 'on_start', lineNotifyOnPublish is true (sent on publish or when startAt arrives)
+    const lineNotifyOnPublish = enableLineNotify && (sendTimingMode === 'immediate' || sendTimingMode === 'on_start');
 
     try {
+      let savedAnn: Announcement;
       if (editingId) {
         const existing = announcements.find((a) => a.id === editingId);
-        if (existing) {
-          const updatedAnn: Announcement = {
-            ...existing,
-            title: title.trim(),
-            content: content.trim(),
-            date,
-            badge: badge.trim() || undefined,
-            startAt: finalStartIso,
-            endAt: finalEndIso,
-            lineNotifyOnPublish,
-            lineNotifyScheduledAt: scheduledListIso,
-          };
-          await updateAnnouncement(updatedAnn);
-        }
+        const updatedAnn: Announcement = {
+          ...existing,
+          id: editingId,
+          title: title.trim(),
+          content: content.trim(),
+          date,
+          badge: badge.trim() || undefined,
+          startAt: finalStartIso,
+          endAt: finalEndIso,
+          lineNotifyOnPublish,
+          lineNotifyScheduledAt: scheduledListIso,
+          createdAt: existing?.createdAt || new Date().toISOString(),
+          authorId: currentUser ? currentUser.id : 'guest',
+          authorName: currentUser ? (currentUser.username || currentUser.name) : 'ผู้เยี่ยมชม',
+          authorAvatar: currentUser?.avatar,
+        };
+        savedAnn = await updateAnnouncement(updatedAnn);
       } else {
-        await addAnnouncement(
+        savedAnn = await addAnnouncement(
           title.trim(),
           content.trim(),
           date,
@@ -312,23 +389,45 @@ export const AnnouncementBoard: React.FC = () => {
         );
       }
 
-      const activeMemberCount = users.filter((u) => u.lineUserId && u.lineNotificationEnabled !== false).length;
+      // Collect eligible recipient LINE IDs
+      const recipientUserIds = users
+        .filter((u) => u.lineUserId && u.lineUserId.startsWith('U') && u.lineNotificationEnabled !== false)
+        .map((u) => u.lineUserId as string);
+
       if (enableLineNotify) {
+        // Trigger server-side LINE notification evaluation immediately
+        const notifyRes = await safeFetchJson(getApiUrl('/api/line/announcement-notify'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            announcementId: savedAnn.id,
+            announcement: savedAnn,
+            recipientUserIds,
+            force: sendTimingMode === 'immediate', // Force immediate delivery if user chose immediate publish
+          }),
+        });
+
         if (sendTimingMode === 'immediate') {
+          const sentCount = notifyRes.data?.sent ?? recipientUserIds.length;
           setFeedback({
             type: 'success',
-            text: `📢 บันทึกและเผยแพร่สำเร็จ! ส่งแจ้งเตือนเข้า LINE OA สมาชิกแล้ว (${activeMemberCount} คน)`,
+            text: `📢 บันทึกและเผยแพร่สำเร็จ! ส่งข้อความเข้า LINE OA สมาชิกแล้ว (${sentCount} คน)`,
+          });
+        } else if (sendTimingMode === 'on_start') {
+          setFeedback({
+            type: 'success',
+            text: `⏰ บันทึกประกาศสำเร็จ! บอทจะส่งแจ้งเตือนเข้า LINE OA อัตโนมัติเมื่อถึงเวลาเริ่มประกาศ (${formatDisplayTime(finalStartIso)})`,
           });
         } else {
           setFeedback({
             type: 'success',
-            text: `⏰ บันทึกสำเร็จ! ตั้งเวลาส่งแจ้งเตือน LINE วันที่ ${formatDisplayTime(scheduledListIso[0])} เรียบร้อยแล้ว`,
+            text: `⏰ บันทึกประกาศสำเร็จ! ตั้งเวลาส่งแจ้งเตือนเข้า LINE OA วันที่ ${formatDisplayTime(scheduledListIso[0])} เรียบร้อยแล้ว`,
           });
         }
       } else {
         setFeedback({
           type: 'success',
-          text: `✅ บันทึกประกาศสำเร็จเรียบร้อยแล้ว`,
+          text: `✅ บันทึกประกาศสำเร็จเรียบร้อยแล้ว (ไม่ส่ง LINE)`,
         });
       }
 
@@ -400,6 +499,10 @@ export const AnnouncementBoard: React.FC = () => {
     (a) => getAnnouncementStatus(a, nowTimestamp) === 'active'
   ).length;
 
+  const activeLineMembersCount = useMemo(() => {
+    return users.filter((u) => u.lineUserId && u.lineNotificationEnabled !== false).length;
+  }, [users]);
+
   return (
     <section className="mb-8">
       {/* Header bar */}
@@ -466,7 +569,7 @@ export const AnnouncementBoard: React.FC = () => {
         </div>
       )}
 
-      {/* Add / Edit Announcement Modal or Form */}
+      {/* Add / Edit Announcement Modal Form */}
       {isFormOpen && (
         <form
           onSubmit={handleSubmit}
@@ -474,11 +577,13 @@ export const AnnouncementBoard: React.FC = () => {
         >
           <div className="flex items-center justify-between pb-3 mb-3 border-b border-[#FFC067]/30">
             <span className="text-xs font-bold text-neutral-900 flex items-center gap-1.5">
-              <Megaphone className="w-3.5 h-3.5 text-[#FFC067]" />
-              <span>{editingId ? 'แก้ไขและเผยแพร่ประกาศ (Publish)' : 'เขียนประกาศใหม่และเผยแพร่ (Publish)'}</span>
+              <Megaphone className="w-4 h-4 text-[#FFC067]" />
+              <span className="font-extrabold text-sm text-neutral-950">
+                {editingId ? 'แก้ไขและเผยแพร่ประกาศ (Publish)' : 'เขียนประกาศใหม่และเผยแพร่ (Publish)'}
+              </span>
             </span>
-            <span className="text-xs text-neutral-400">
-              ผู้ประกาศ: <strong className="text-neutral-800">{currentUser ? (currentUser.username || currentUser.name) : 'ผู้เยี่ยมชม'}</strong>
+            <span className="text-xs text-neutral-500">
+              ผู้ประกาศ: <strong className="text-neutral-900">{currentUser ? (currentUser.username || currentUser.name) : 'ผู้เยี่ยมชม'}</strong>
             </span>
           </div>
 
@@ -532,53 +637,179 @@ export const AnnouncementBoard: React.FC = () => {
             />
           </div>
 
-          {/* Web Display Time Window */}
-          <div className="p-3 mb-3 rounded-xl bg-amber-50/60 border border-[#FFC067]/40 space-y-2">
-            <div className="flex items-center gap-1.5 text-xs font-bold text-amber-900">
-              <Timer className="w-3.5 h-3.5 text-[#FFC067]" />
-              <span>ช่วงเวลาที่ต้องการให้แสดงบนหน้าเว็บ (ซ่อนเมื่อหมดเวลา / ไม่บังคับ):</span>
+          {/* SECTION 1: Web Display Time Window with Quick Preset Buttons */}
+          <div className="p-3.5 mb-3 rounded-2xl bg-gradient-to-r from-amber-50/70 to-orange-50/60 border border-[#FFC067]/60 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5 text-xs font-extrabold text-amber-950">
+                <Timer className="w-4 h-4 text-[#F5B153]" />
+                <span>กำหนดช่วงเวลาที่ต้องการให้แสดงบนหน้าเว็บ (Start - End)</span>
+              </div>
+              <span className="text-[10px] text-amber-800 font-medium">
+                ซ่อนเมื่อหมดเวลา / ไม่บังคับ
+              </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-              <div>
-                <label className="block text-[10px] font-bold text-neutral-600 mb-1">
-                  เริ่มแสดงบนหน้าเว็บ (Start At - หากเว้นว่างจะเริ่มทันที)
-                </label>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 pt-1">
+              {/* Start At Input + Preset Buttons */}
+              <div className="p-2.5 rounded-xl bg-white border border-amber-200 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-[11px] font-extrabold text-neutral-800 flex items-center gap-1">
+                    <span>🟢 เริ่มแสดงบนเว็บ (Start At):</span>
+                  </label>
+                  {startAtInput && (
+                    <button
+                      type="button"
+                      onClick={handleClearStart}
+                      className="text-[10px] text-red-500 hover:text-red-700 font-bold cursor-pointer"
+                    >
+                      ✕ ล้างเวลา (เริ่มทันที)
+                    </button>
+                  )}
+                </div>
+
                 <input
                   type="datetime-local"
                   value={startAtInput}
                   onChange={(e) => setStartAtInput(e.target.value)}
-                  className="w-full px-2.5 py-1.5 text-xs font-bold rounded-lg bg-white border border-neutral-200 focus:border-[#FFC067] focus:outline-hidden text-neutral-800"
+                  className="w-full px-2.5 py-1.5 text-xs font-bold rounded-lg bg-neutral-50 border border-neutral-300 focus:border-[#FFC067] focus:bg-white focus:outline-hidden text-neutral-900"
                 />
+
+                {/* Preset Buttons for Start Time */}
+                <div className="space-y-1 pt-1">
+                  <div className="text-[10px] font-bold text-neutral-500">
+                    ⚡ ปุ่มเลือกเวลาเริ่มด่วน:
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    <button
+                      type="button"
+                      onClick={handlePresetStartNow}
+                      className="px-2 py-1 rounded-md bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-bold transition-all cursor-pointer"
+                    >
+                      ⚡ ตอนนี้
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handlePresetStartToday(18)}
+                      className="px-2 py-1 rounded-md bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-[10px] font-bold transition-all cursor-pointer"
+                    >
+                      🌇 วันนี้ 18:00
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handlePresetStartTomorrow(8)}
+                      className="px-2 py-1 rounded-md bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-[10px] font-bold transition-all cursor-pointer"
+                    >
+                      ☀️ พรุ่งนี้ 08:00
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handlePresetStartAddHours(1)}
+                      className="px-2 py-1 rounded-md bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-[10px] font-bold transition-all cursor-pointer"
+                    >
+                      +1 ชม.
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handlePresetStartAddHours(3)}
+                      className="px-2 py-1 rounded-md bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-[10px] font-bold transition-all cursor-pointer"
+                    >
+                      +3 ชม.
+                    </button>
+                  </div>
+                </div>
               </div>
 
-              <div>
-                <label className="block text-[10px] font-bold text-neutral-600 mb-1">
-                  สิ้นสุดการแสดง (End At - ซ่อนเมื่อถึงเวลานี้)
-                </label>
+              {/* End At Input + Preset Buttons */}
+              <div className="p-2.5 rounded-xl bg-white border border-amber-200 space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <label className="block text-[11px] font-extrabold text-neutral-800 flex items-center gap-1">
+                    <span>⌛ สิ้นสุดการแสดง (End At - ซ่อนเมื่อถึงเวลานี้):</span>
+                  </label>
+                  {endAtInput && (
+                    <button
+                      type="button"
+                      onClick={handleClearEnd}
+                      className="text-[10px] text-red-500 hover:text-red-700 font-bold cursor-pointer"
+                    >
+                      ✕ ล้างเวลา (แสดงตลอด)
+                    </button>
+                  )}
+                </div>
+
                 <input
                   type="datetime-local"
                   value={endAtInput}
                   onChange={(e) => setEndAtInput(e.target.value)}
-                  className="w-full px-2.5 py-1.5 text-xs font-bold rounded-lg bg-white border border-neutral-200 focus:border-[#FFC067] focus:outline-hidden text-neutral-800"
+                  className="w-full px-2.5 py-1.5 text-xs font-bold rounded-lg bg-neutral-50 border border-neutral-300 focus:border-[#FFC067] focus:bg-white focus:outline-hidden text-neutral-900"
                 />
+
+                {/* Preset Buttons for End Time / Duration */}
+                <div className="space-y-1 pt-1">
+                  <div className="text-[10px] font-bold text-neutral-500">
+                    ⏱️ ปุ่มเลือกระยะเวลาประกาศ:
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    <button
+                      type="button"
+                      onClick={() => handlePresetEndAddDays(1)}
+                      className="px-2 py-1 rounded-md bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 text-[10px] font-bold transition-all cursor-pointer"
+                    >
+                      📅 24 ชม.
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handlePresetEndAddDays(3)}
+                      className="px-2 py-1 rounded-md bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-[10px] font-bold transition-all cursor-pointer"
+                    >
+                      📅 3 วัน
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handlePresetEndAddDays(7)}
+                      className="px-2 py-1 rounded-md bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-[10px] font-bold transition-all cursor-pointer"
+                    >
+                      📅 7 วัน
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handlePresetEndAddDays(14)}
+                      className="px-2 py-1 rounded-md bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-[10px] font-bold transition-all cursor-pointer"
+                    >
+                      📅 14 วัน
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handlePresetEndAddDays(30)}
+                      className="px-2 py-1 rounded-md bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-[10px] font-bold transition-all cursor-pointer"
+                    >
+                      📅 30 วัน
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleClearEnd}
+                      className="px-2 py-1 rounded-md bg-neutral-100 hover:bg-neutral-200 text-neutral-600 text-[10px] font-bold transition-all cursor-pointer"
+                    >
+                      ♾️ ตลอดไป
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
-            <p className="text-[10px] text-neutral-500 font-medium">
-              * หากไม่ระบุช่วงเวลา ประกาศจะแสดงตลอดเวลาเป็นปกติ
-            </p>
           </div>
 
-          {/* DEDICATED & EXPLICIT LINE NOTIFICATION SETTINGS */}
-          <div className="p-4 mb-3.5 rounded-2xl bg-gradient-to-br from-emerald-50 to-green-50 border-2 border-emerald-400 space-y-3.5 shadow-sm">
-            <div className="flex items-center justify-between border-b border-emerald-200 pb-2.5">
+          {/* SECTION 2: PROMINENT & DEDICATED LINE OA NOTIFICATION SETTINGS */}
+          <div className="p-4 mb-3.5 rounded-2xl bg-gradient-to-br from-emerald-50 via-green-50 to-emerald-100/50 border-2 border-emerald-400 space-y-3.5 shadow-sm">
+            <div className="flex items-center justify-between border-b border-emerald-300/70 pb-2.5">
               <div className="flex items-center gap-2">
-                <div className="w-6 h-6 rounded-lg bg-[#06C755] text-white flex items-center justify-center text-xs font-extrabold shadow-xs">
+                <div className="w-7 h-7 rounded-lg bg-[#06C755] text-white flex items-center justify-center text-sm font-extrabold shadow-xs">
                   💬
                 </div>
                 <div>
-                  <h4 className="text-xs font-extrabold text-emerald-950">
-                    การแจ้งเตือนประกาศเข้า LINE OA สมาชิก
+                  <h4 className="text-xs font-extrabold text-emerald-950 flex items-center gap-1.5">
+                    <span>การแจ้งเตือนประกาศเข้า LINE OA สมาชิก</span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-200 text-emerald-950 font-bold">
+                      {activeLineMembersCount} สมาชิกพร้อมรับ
+                    </span>
                   </h4>
                   <p className="text-[10px] text-emerald-800 font-medium">
                     ส่งข้อความอัตโนมัติหาเพื่อนๆ ในทีมที่มีบัญชี LINE OA
@@ -586,109 +817,160 @@ export const AnnouncementBoard: React.FC = () => {
                 </div>
               </div>
 
-              {/* Master Toggle */}
-              <label className="flex items-center gap-2 cursor-pointer">
+              {/* Master Switch */}
+              <label className="flex items-center gap-2 cursor-pointer bg-white px-2.5 py-1 rounded-xl border border-emerald-300 shadow-xs">
                 <input
                   type="checkbox"
                   checked={enableLineNotify}
                   onChange={(e) => setEnableLineNotify(e.target.checked)}
                   className="w-4 h-4 text-emerald-600 rounded-sm focus:ring-emerald-500 cursor-pointer accent-[#06C755]"
                 />
-                <span className="text-xs font-bold text-emerald-900">
+                <span className="text-xs font-extrabold text-emerald-950">
                   {enableLineNotify ? 'เปิดส่ง LINE' : 'ปิดส่ง LINE'}
                 </span>
               </label>
             </div>
 
             {enableLineNotify && (
-              <div className="space-y-3 animate-in fade-in duration-150">
-                {/* 1. Choice of Send Time */}
+              <div className="space-y-3.5 animate-in fade-in duration-150">
+                {/* 3 Clickable Modes for LINE Broadcast */}
                 <div>
-                  <label className="block text-[11px] font-extrabold text-neutral-800 mb-1.5">
-                    1. เลือกเวลาที่ต้องการให้ส่งข้อความ LINE:
+                  <label className="block text-[11px] font-extrabold text-neutral-800 mb-2">
+                    เลือกรูปแบบเวลาที่ต้องการให้ส่งข้อความ LINE:
                   </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {/* Option A: Send Immediately upon Publish */}
-                    <label
-                      className={`flex items-start gap-2.5 p-3 rounded-xl border cursor-pointer transition-all ${
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    {/* Mode 1: Immediate */}
+                    <button
+                      type="button"
+                      onClick={() => setSendTimingMode('immediate')}
+                      className={`text-left p-3 rounded-xl border-2 transition-all cursor-pointer ${
                         sendTimingMode === 'immediate'
-                          ? 'bg-white border-[#06C755] shadow-xs ring-1 ring-[#06C755]'
+                          ? 'bg-white border-[#06C755] shadow-sm ring-2 ring-[#06C755]/30'
                           : 'bg-white/80 border-neutral-200 hover:border-emerald-300'
                       }`}
                     >
-                      <input
-                        type="radio"
-                        name="sendTimingMode"
-                        value="immediate"
-                        checked={sendTimingMode === 'immediate'}
-                        onChange={() => setSendTimingMode('immediate')}
-                        className="mt-0.5 accent-[#06C755] cursor-pointer"
-                      />
-                      <div className="text-xs">
-                        <span className="font-extrabold text-neutral-900 flex items-center gap-1">
-                          <span>⚡ ส่งทันทีเมื่อกดเผยแพร่ (Publish)</span>
-                        </span>
-                        <p className="text-[10px] text-neutral-500 mt-0.5 leading-tight">
-                          ส่งข้อความประกาศเข้า LINE ของสมาชิกทุกคนทันทีที่กดบันทึก
-                        </p>
+                      <div className="flex items-center gap-1.5 font-extrabold text-xs text-neutral-900 mb-1">
+                        <Zap className="w-3.5 h-3.5 text-emerald-600 fill-emerald-600" />
+                        <span>ส่งทันที (Now)</span>
                       </div>
-                    </label>
+                      <p className="text-[10px] text-neutral-500 leading-tight">
+                        ส่งเข้า LINE ของสมาชิกทุกคนทันทีที่กดบันทึกประกาศ
+                      </p>
+                    </button>
 
-                    {/* Option B: Choose specific Date and Time */}
-                    <label
-                      className={`flex items-start gap-2.5 p-3 rounded-xl border cursor-pointer transition-all ${
-                        sendTimingMode === 'scheduled'
-                          ? 'bg-white border-[#06C755] shadow-xs ring-1 ring-[#06C755]'
+                    {/* Mode 2: When Announcement Starts */}
+                    <button
+                      type="button"
+                      onClick={() => setSendTimingMode('on_start')}
+                      className={`text-left p-3 rounded-xl border-2 transition-all cursor-pointer ${
+                        sendTimingMode === 'on_start'
+                          ? 'bg-white border-[#06C755] shadow-sm ring-2 ring-[#06C755]/30'
                           : 'bg-white/80 border-neutral-200 hover:border-emerald-300'
                       }`}
                     >
-                      <input
-                        type="radio"
-                        name="sendTimingMode"
-                        value="scheduled"
-                        checked={sendTimingMode === 'scheduled'}
-                        onChange={() => setSendTimingMode('scheduled')}
-                        className="mt-0.5 accent-[#06C755] cursor-pointer"
-                      />
-                      <div className="text-xs">
-                        <span className="font-extrabold text-neutral-900 flex items-center gap-1">
-                          <Clock className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>⏰ กำหนดวันและเวลาที่ต้องการให้ส่ง</span>
-                        </span>
-                        <p className="text-[10px] text-neutral-500 mt-0.5 leading-tight">
-                          ระบุวันที่และชั่วโมง:นาทีที่ต้องการให้บอทส่งแจ้งเตือน
-                        </p>
+                      <div className="flex items-center gap-1.5 font-extrabold text-xs text-neutral-900 mb-1">
+                        <Timer className="w-3.5 h-3.5 text-amber-600" />
+                        <span>ตามเวลาเริ่มประกาศ</span>
                       </div>
-                    </label>
+                      <p className="text-[10px] text-neutral-500 leading-tight">
+                        ส่งเมื่อถึงเวลา Start At (หรือส่งทันทีถ้าไม่ได้ระบุ Start At)
+                      </p>
+                    </button>
+
+                    {/* Mode 3: Custom Date & Time */}
+                    <button
+                      type="button"
+                      onClick={() => setSendTimingMode('custom')}
+                      className={`text-left p-3 rounded-xl border-2 transition-all cursor-pointer ${
+                        sendTimingMode === 'custom'
+                          ? 'bg-white border-[#06C755] shadow-sm ring-2 ring-[#06C755]/30'
+                          : 'bg-white/80 border-neutral-200 hover:border-emerald-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-1.5 font-extrabold text-xs text-neutral-900 mb-1">
+                        <Clock className="w-3.5 h-3.5 text-blue-600" />
+                        <span>กำหนดเวลาส่งเอง</span>
+                      </div>
+                      <p className="text-[10px] text-neutral-500 leading-tight">
+                        ระบุวันและชั่วโมง:นาทีที่ต้องการให้ส่งข้อความเตือน
+                      </p>
+                    </button>
                   </div>
                 </div>
 
-                {/* PROMINENT DATETIME INPUT PICKER (when scheduled timing selected) */}
-                {sendTimingMode === 'scheduled' && (
-                  <div className="p-3 bg-white rounded-xl border-2 border-emerald-500 space-y-1.5 animate-in slide-in-from-top-1 duration-150">
-                    <label className="block text-xs font-extrabold text-emerald-950 flex items-center gap-1.5">
-                      <Clock className="w-4 h-4 text-[#06C755]" />
-                      <span>ช่องเลือกวันและเวลาที่ต้องการให้ส่ง LINE *:</span>
-                    </label>
+                {/* PROMINENT DATETIME INPUT PICKER FOR CUSTOM TIMING */}
+                {sendTimingMode === 'custom' && (
+                  <div className="p-3.5 bg-white rounded-xl border-2 border-emerald-500 space-y-2 shadow-xs animate-in slide-in-from-top-1 duration-150">
+                    <div className="flex items-center justify-between">
+                      <label className="block text-xs font-extrabold text-emerald-950 flex items-center gap-1.5">
+                        <Clock className="w-4 h-4 text-[#06C755]" />
+                        <span>ช่องเลือกวันและเวลาที่ต้องการให้ส่ง LINE *:</span>
+                      </label>
+                      <span className="text-[10px] text-emerald-700 font-bold">
+                        (ระบุวันและชั่วโมง:นาที)
+                      </span>
+                    </div>
+
                     <input
                       type="datetime-local"
-                      required={sendTimingMode === 'scheduled'}
+                      required={sendTimingMode === 'custom'}
                       value={scheduledSendTime}
                       onChange={(e) => setScheduledSendTime(e.target.value)}
-                      className="w-full px-3 py-2 text-xs font-bold rounded-lg bg-neutral-50 border border-neutral-300 focus:bg-white focus:border-[#06C755] focus:outline-hidden text-neutral-900"
+                      className="w-full px-3 py-2 text-xs font-bold rounded-lg bg-neutral-50 border border-neutral-300 focus:bg-white focus:border-[#06C755] focus:outline-hidden text-neutral-900 shadow-inner"
                     />
-                    <p className="text-[10px] text-emerald-700 font-medium">
-                      * บอทจะรอส่งเข้า LINE OA ของสมาชิกทุกคนอัตโนมัติเมื่อถึงเวลานี้
-                    </p>
+
+                    {/* Quick Preset Buttons for Custom LINE Time */}
+                    <div className="space-y-1 pt-1">
+                      <div className="text-[10px] font-bold text-neutral-500">
+                        ⚡ ปุ่มลัดเลือกเวลาส่ง LINE ด่วน:
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        <button
+                          type="button"
+                          onClick={handlePresetLineSendNow}
+                          className="px-2.5 py-1 rounded-md bg-emerald-100 hover:bg-emerald-200 text-emerald-950 text-[10px] font-bold border border-emerald-300 transition-all cursor-pointer"
+                        >
+                          ⚡ ตอนนี้
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handlePresetLineSendToday(18)}
+                          className="px-2.5 py-1 rounded-md bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-[10px] font-bold transition-all cursor-pointer"
+                        >
+                          🌇 วันนี้ 18:00
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handlePresetLineSendTomorrow(8)}
+                          className="px-2.5 py-1 rounded-md bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-[10px] font-bold transition-all cursor-pointer"
+                        >
+                          ☀️ พรุ่งนี้ 08:00
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handlePresetLineSendAddHours(1)}
+                          className="px-2.5 py-1 rounded-md bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-[10px] font-bold transition-all cursor-pointer"
+                        >
+                          +1 ชม.
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handlePresetLineSendAddHours(3)}
+                          className="px-2.5 py-1 rounded-md bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-[10px] font-bold transition-all cursor-pointer"
+                        >
+                          +3 ชม.
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
 
-                {/* 2. Additional reminder slots */}
+                {/* Additional Reminder Slots (ส่งเตือนซ้ำหลายรอบ) */}
                 <div className="bg-white/90 p-3 rounded-xl border border-emerald-200 space-y-2">
                   <div className="flex items-center justify-between">
                     <span className="text-[11px] font-extrabold text-neutral-800 flex items-center gap-1">
                       <Bell className="w-3.5 h-3.5 text-emerald-600" />
-                      <span>2. ต้องการตั้งเวลาส่งเตือนซ้ำอีกหรือไม่? (ไม่บังคับ / เพิ่มได้หลายรอบ):</span>
+                      <span>ตั้งเวลาส่งเตือนซ้ำอีก (ไม่บังคับ / เพิ่มได้หลายรอบ):</span>
                     </span>
                   </div>
 
@@ -708,7 +990,7 @@ export const AnnouncementBoard: React.FC = () => {
                       className="px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-1 cursor-pointer"
                     >
                       <Plus className="w-3.5 h-3.5" />
-                      <span>+ เพิ่มเวลาเตือนอีก</span>
+                      <span>+ เพิ่มเวลานี้</span>
                     </button>
                   </div>
 
@@ -751,23 +1033,24 @@ export const AnnouncementBoard: React.FC = () => {
             )}
           </div>
 
-          <div className="flex items-center justify-between gap-3 pt-2">
+          {/* Bottom Bar & Submit Button */}
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 pt-2 border-t border-neutral-100">
             <div className="flex items-center gap-2">
-              <Tag className="w-3.5 h-3.5 text-neutral-950" />
+              <Tag className="w-3.5 h-3.5 text-neutral-500" />
               <input
                 type="text"
-                placeholder="ป้ายกำกับ (เช่น สำคัญ, หมอนัด)"
+                placeholder="ป้ายกำกับ (เช่น สำคัญ, หมอนัด, อาหาร)"
                 value={badge}
                 onChange={(e) => setBadge(e.target.value)}
                 className="px-2.5 py-1 text-xs rounded-lg bg-neutral-50 border border-neutral-200 w-44 focus:bg-white focus:outline-hidden font-semibold"
               />
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center justify-end gap-2">
               <button
                 type="button"
                 onClick={handleCloseForm}
-                className="px-3 py-1.5 text-xs text-neutral-600 hover:text-neutral-900 cursor-pointer font-semibold"
+                className="px-3.5 py-2 text-xs text-neutral-600 hover:text-neutral-900 cursor-pointer font-semibold rounded-xl"
               >
                 ยกเลิก
               </button>
@@ -784,7 +1067,11 @@ export const AnnouncementBoard: React.FC = () => {
                 ) : (
                   <>
                     <Send className="w-3.5 h-3.5" />
-                    <span>{editingId ? '💾 บันทึกและเผยแพร่ (Publish)' : '📢 เผยแพร่ประกาศ (Publish)'}</span>
+                    <span>
+                      {editingId
+                        ? '💾 บันทึกและเผยแพร่ (Publish)'
+                        : '📢 เผยแพร่ประกาศ (Publish)'}
+                    </span>
                   </>
                 )}
               </button>
@@ -881,19 +1168,19 @@ export const AnnouncementBoard: React.FC = () => {
 
                     {/* Admin Actions: Edit/Extend & Delete & Test Send LINE */}
                     {isAdmin && (
-                      <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100 transition-opacity">
+                      <div className="flex items-center gap-1 opacity-90 group-hover:opacity-100 transition-opacity">
                         <button
                           onClick={() => handleTriggerLineNow(item)}
                           disabled={isSendingThis}
                           title="กดส่งประกาศนี้เข้า LINE OA สมาชิกตอนนี้ทันที"
-                          className="px-2 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-[10px] font-bold border border-emerald-300 flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50"
+                          className="px-2 py-1 rounded-lg bg-[#06C755]/10 hover:bg-[#06C755]/20 text-[#06C755] text-[10px] font-extrabold border border-[#06C755]/40 flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50"
                         >
                           {isSendingThis ? (
-                            <Loader2 className="w-3 h-3 animate-spin text-emerald-600" />
+                            <Loader2 className="w-3 h-3 animate-spin text-[#06C755]" />
                           ) : (
-                            <Send className="w-3 h-3 text-emerald-600" />
+                            <Send className="w-3 h-3 text-[#06C755]" />
                           )}
-                          <span>ส่ง LINE ทันที</span>
+                          <span>ส่ง LINE ตอนนี้</span>
                         </button>
 
                         <button
@@ -951,9 +1238,9 @@ export const AnnouncementBoard: React.FC = () => {
                         {item.lineNotifyScheduledAt!.map((s, idx) => (
                           <span
                             key={s + idx}
-                            className="px-1.5 py-0.5 bg-white rounded border border-emerald-200 font-semibold text-[9px]"
+                            className="px-1.5 py-0.5 rounded-md bg-emerald-100 text-[9px] font-bold text-emerald-900"
                           >
-                            {formatDisplayTime(s)}
+                            #{idx + 1}: {formatDisplayTime(s)}
                           </span>
                         ))}
                       </div>
@@ -961,21 +1248,33 @@ export const AnnouncementBoard: React.FC = () => {
                   )}
                 </div>
 
-                {/* Author name on bottom-left */}
-                <div className="pt-2.5 border-t border-neutral-100 flex items-center justify-between">
-                  <div className="flex items-center gap-1.5 text-[11px] text-neutral-600 font-medium">
-                    <div className="w-4 h-4 rounded-full bg-[#FFF8EE] text-neutral-950 flex items-center justify-center text-[9px] font-bold border border-[#FFC067]/60">
-                      {item.authorName.charAt(0).toUpperCase()}
-                    </div>
-                    <span>{item.authorName}</span>
+                <div className="pt-2 border-t border-neutral-100 flex items-center justify-between text-[11px] text-neutral-400 font-medium">
+                  <div className="flex items-center gap-1.5">
+                    {item.authorAvatar ? (
+                      <img
+                        src={item.authorAvatar}
+                        alt=""
+                        className="w-4 h-4 rounded-full object-cover"
+                      />
+                    ) : (
+                      <div className="w-4 h-4 rounded-full bg-[#FFC067] text-neutral-950 flex items-center justify-center text-[9px] font-bold">
+                        {(item.authorName || 'B')[0]}
+                      </div>
+                    )}
+                    <span>{item.authorName || 'สมาชิกทีม'}</span>
                   </div>
 
-                  <span className="text-[10px] text-neutral-400 font-semibold">
-                    {new Date(item.createdAt).toLocaleDateString('en-US', {
-                      day: 'numeric',
-                      month: 'short',
-                    })}
-                  </span>
+                  {/* Broadcast Now direct button */}
+                  {isAdmin && (
+                    <button
+                      onClick={() => handleTriggerLineNow(item)}
+                      disabled={isSendingThis}
+                      className="text-[10px] text-[#06C755] hover:text-[#05b34c] font-extrabold flex items-center gap-1 transition-colors cursor-pointer"
+                    >
+                      <Sparkles className="w-3 h-3" />
+                      <span>ส่งข้อความเข้า LINE</span>
+                    </button>
+                  )}
                 </div>
               </div>
             );
