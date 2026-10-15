@@ -509,6 +509,9 @@ export async function handleLinePushNotification(req: any, res: any) {
           },
         ];
 
+    // Requirement 4: Debug log before sending
+    console.log(`[LINE Push Server Dispatch] Target LINE User ID: ${recipientLineUserId} | Text: "${messageText || ''}"`);
+
     const pushResponse = await fetch('https://api.line.me/v2/bot/message/push', {
       method: 'POST',
       headers: {
@@ -523,7 +526,8 @@ export async function handleLinePushNotification(req: any, res: any) {
 
     if (!pushResponse.ok) {
       const errJson = await pushResponse.json().catch(() => ({}));
-      console.warn('[LINE Push API Error]:', errJson);
+      // Requirement 4: Detailed error message in console.error
+      console.error(`[LINE Push API Error] Status: ${pushResponse.status} | Response:`, JSON.stringify(errJson));
       const errMsg = errJson?.message || JSON.stringify(errJson);
       let userFriendlyNotice = `LINE API Error (${pushResponse.status}): ${errMsg}`;
       if (errMsg.includes('property') && errMsg.includes('to')) {
@@ -535,6 +539,8 @@ export async function handleLinePushNotification(req: any, res: any) {
       });
     }
 
+    console.log(`[LINE Push API Success]: Message delivered to ${recipientLineUserId}`);
+
     return sendJson(res, 200, {
       success: true,
       message: `ส่งการแจ้งเตือนถึงคุณ ${resolved.userName} เข้า LINE สำเร็จ!`,
@@ -542,7 +548,7 @@ export async function handleLinePushNotification(req: any, res: any) {
       recipientName: resolved.userName,
     });
   } catch (err: any) {
-    console.warn('[Push Notification Error]:', err.message);
+    console.error('[Push Notification Error]: Exception occurred:', err.message || err);
     return sendJson(res, 200, { success: false, error: err.message });
   }
 }

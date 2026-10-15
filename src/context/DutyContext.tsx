@@ -352,9 +352,27 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
     safeSetDoc(doc(db, 'activity_logs', newLog.id), newLog).catch(console.warn);
   };
 
-  // Helper to send LINE Push Notification via Messaging API
+  // Helper function to format date string for LINE notification (e.g., 2026-10-15 -> 15 ต.ค. 2569)
+  const formatDateDisplay = (dateStr: string): string => {
+    if (!dateStr) return '';
+    const parts = dateStr.split('-');
+    if (parts.length !== 3) return dateStr;
+    const y = parseInt(parts[0], 10) + 543;
+    const m = parseInt(parts[1], 10);
+    const d = parseInt(parts[2], 10);
+    const thaiMonths = [
+      'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
+      'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'
+    ];
+    return `${d} ${thaiMonths[m - 1]} ${y}`;
+  };
+
+  // Helper to send LINE Push Notification via Messaging API (Backend Proxy - No CORS)
   const sendLinePushNotification = async (targetUserId: string, messageText: string): Promise<boolean> => {
-    if (!targetUserId) return false;
+    if (!targetUserId) {
+      console.warn('[LINE Push Skip] ไม่ได้ระบุ targetUserId');
+      return false;
+    }
 
     // Resolve targetUserId locally if nickname, name, or internal user ID was passed
     const cleanTarget = targetUserId.trim().toLowerCase();
@@ -367,36 +385,48 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
         (u.nickname && u.nickname.toLowerCase() === cleanTarget)
     );
 
-    const actualTarget = matchedUser?.lineUserId || matchedUser?.id || targetUserId;
+    // Requirement 1: Check lineUserId from Database/State first. If empty, skip without throwing error
+    const lineUserId = matchedUser?.lineUserId || (targetUserId.startsWith('U') && targetUserId.length >= 30 ? targetUserId : null);
+    if (!lineUserId) {
+      const uLabel = matchedUser ? `${matchedUser.nickname || matchedUser.name || matchedUser.username}` : targetUserId;
+      console.warn(`[LINE Push Skip] ผู้ใช้ "${uLabel}" ยังไม่ได้เชื่อมต่อ lineUserId ในระบบ (ข้ามการส่งแจ้งเตือน)`);
+      return false;
+    }
+
+    // Requirement 4: Debug console.log before sending
+    console.log(`[LINE Push Sending] Target LINE User ID: ${lineUserId} | Message: "${messageText}"`);
 
     try {
+      // Requirement 2: Send data through backend API Route (/api/line/push-notification) to prevent CORS
       let res = await fetch(getApiUrl('/api/line/push-notification'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ targetUserId: actualTarget, messageText }),
+        body: JSON.stringify({ targetUserId: lineUserId, messageText }),
       });
       let data = await res.json().catch(() => null);
 
-      // If endpoint failed or returned non-JSON 404, fallback to backend Express container directly
       if (!res.ok || !data) {
         const fallbackUrl = 'https://ais-dev-olsgx3yczrx7ghc5qkwxao-603131036827.asia-southeast1.run.app/api/line/push-notification';
         res = await fetch(fallbackUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ targetUserId: actualTarget, messageText }),
+          body: JSON.stringify({ targetUserId: lineUserId, messageText }),
         });
         data = await res.json().catch(() => null);
       }
 
       if (res.ok && data?.success) {
-        console.log(`[LINE Push Sent]: to ${actualTarget} (${data?.recipientName || ''})`);
+        console.log(`[LINE Push Success]: Delivered to ${lineUserId} (${data?.recipientName || ''})`);
         return true;
-      } else if (data?.error) {
-        console.warn(`[LINE Push Failed]: to ${actualTarget}:`, data.error);
+      } else {
+        // Requirement 4: Detailed Error Message in console.error
+        const errMsg = data?.error || res.statusText || 'Unknown LINE Push Error';
+        console.error(`[LINE Push API Error]: Failed to send to ${lineUserId}. Cause:`, errMsg);
+        return false;
       }
-      return false;
     } catch (err: any) {
-      console.warn('LINE Push Notification trigger failed:', err?.message || err);
+      // Requirement 4: Detailed Error Message in console.error
+      console.error(`[LINE Push API Error]: Network/Server exception when pushing to ${lineUserId}:`, err.message || err);
       return false;
     }
   };
@@ -985,9 +1015,10 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!targetUser) return false;
 
     const existingIdx = shifts.findIndex((s) => s.date === date && s.type === type);
+    const isEdit = existingIdx >= 0;
     let updatedShift: ShiftAssignment;
 
-    if (existingIdx >= 0) {
+    if (isEdit) {
       const cur = { ...shifts[existingIdx] };
       if (type === 'daily') {
         const currentMorning = getShiftMorningUserId(cur) || '';
@@ -1031,13 +1062,17 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     addLog('member_update', `[Admin] มอบหมายเวร ${type} (${part}) วันที่ ${date} ให้แก่ ${targetUser.username || targetUser.name}`);
 
-    // Automatic LINE Push Notification
-    if (targetUser.lineUserId) {
-      const shiftPartText = part === 'morning' ? 'เวรเช้า' : part === 'evening' ? 'เวรเย็น' : 'เวรเต็มวัน';
-      sendLinePushNotification(
-        targetUser.lineUserId,
-        `🐶 [BojoiDuty] แอดมินได้จัดเวรใหม่ให้คุณ!\n📅 วันที่: ${date}\n📌 ประเภท: ${type === 'daily' ? shiftPartText : '🛁 เวรอาบน้ำ'}${notes ? `\n📝 หมายเหตุ: ${notes}` : ''}`
-      );
+    // Requirement 1 & 3: Check lineUserId & send formatted push message
+    if (!targetUser.lineUserId) {
+      console.warn(`[LINE Push Skip] ผู้ใช้ "${targetUser.nickname || targetUser.name || targetUser.username}" (ID: ${userId}) ยังไม่มี lineUserId ผูกกับบัญชี ข้ามการส่งแจ้งเตือน`);
+    } else {
+      const shiftPartText = part === 'morning' ? 'กะเช้า' : part === 'evening' ? 'กะเย็น' : type === 'bathing' ? 'เวรอาบน้ำ' : 'เต็มวัน';
+      const formattedDate = formatDateDisplay(date);
+      const msg = isEdit
+        ? `✏️ แจ้งเตือนการแก้ไขเวร: เวรของคุณในวันที่ ${formattedDate} ถูกปรับเปลี่ยนเป็นช่วงเวลา ${shiftPartText} โดย Admin`
+        : `📅 แจ้งเตือนเวรใหม่: คุณได้รับมอบหมายเวรวันที่ ${formattedDate} ช่วงเวลา ${shiftPartText} โดย Admin`;
+
+      sendLinePushNotification(targetUser.lineUserId, msg);
     }
 
     return true;
@@ -1065,15 +1100,17 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
     addLog('cancel_shift', `[Admin] ลบเวรทั้งหมดของวันที่ ${date} (${targetShifts.length} รายการ)`);
 
-    // Notify affected users
+    // Requirement 1 & 3: Notify affected users with formatted cancel message
     affectedUserIds.forEach((uId) => {
       const u = users.find((x) => x.id === uId);
-      if (u && u.lineUserId) {
-        sendLinePushNotification(
-          u.lineUserId,
-          `📢 [BojoiDuty] แอดมินได้ยกเลิกตารางเวรทั้งหมดในวันที่ ${date}`
-        );
+      if (!u) return;
+      if (!u.lineUserId) {
+        console.warn(`[LINE Push Skip] ผู้ใช้ "${u.nickname || u.name || u.username}" (ID: ${uId}) ยังไม่มี lineUserId ผูกกับบัญชี ข้ามการส่งแจ้งเตือน`);
+        return;
       }
+      const formattedDate = formatDateDisplay(date);
+      const msg = `❌ แจ้งเตือนยกเลิกเวร: เวรของคุณในวันที่ ${formattedDate} ถูกยกเลิกโดย Admin`;
+      sendLinePushNotification(u.lineUserId, msg);
     });
 
     return true;
@@ -1150,16 +1187,18 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    // Send LINE notifications to cleared/cancelled users
+    // Requirement 1 & 3: Send LINE notifications to cleared/cancelled users
     affectedUserIds.forEach((uId) => {
       const u = users.find((x) => x.id === uId);
-      if (u && u.lineUserId) {
-        const partText = part === 'morning' ? 'เวรเช้า' : part === 'evening' ? 'เวรเย็น' : part === 'bathing' ? 'เวรอาบน้ำ' : 'เวรประจำวัน';
-        sendLinePushNotification(
-          u.lineUserId,
-          `📢 [BojoiDuty] แอดมินได้ยกเลิก/ปรับเปลี่ยนเวรของคุณ\n📅 วันที่: ${date}\n📌 รายละเอียด: ${partText}`
-        );
+      if (!u) return;
+      if (!u.lineUserId) {
+        console.warn(`[LINE Push Skip] ผู้ใช้ "${u.nickname || u.name || u.username}" (ID: ${uId}) ยังไม่มี lineUserId ผูกกับบัญชี ข้ามการส่งแจ้งเตือน`);
+        return;
       }
+      const partText = part === 'morning' ? 'กะเช้า' : part === 'evening' ? 'กะเย็น' : part === 'bathing' ? 'เวรอาบน้ำ' : 'เต็มวัน';
+      const formattedDate = formatDateDisplay(date);
+      const msg = `❌ แจ้งเตือนยกเลิกเวร: เวรของคุณในวันที่ ${formattedDate} ช่วงเวลา ${partText} ถูกยกเลิกโดย Admin`;
+      sendLinePushNotification(u.lineUserId, msg);
     });
   };
 
@@ -1167,12 +1206,32 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const shift = shifts.find((s) => s.id === shiftId);
     if (!shift) return false;
 
+    const affectedUserIds = new Set<string>();
+    if (shift.userId) affectedUserIds.add(shift.userId);
+    if (shift.morningUserId) affectedUserIds.add(shift.morningUserId);
+    if (shift.eveningUserId) affectedUserIds.add(shift.eveningUserId);
+
     setShifts((prev) => prev.filter((s) => s.id !== shiftId));
     deleteDoc(doc(db, 'shifts', shiftId)).catch(console.warn);
     addLog(
       'cancel_shift',
       `ยกเลิกเวร${shift.type === 'daily' ? 'ประจำวัน' : 'อาบน้ำ'} วันที่ ${shift.date}`
     );
+
+    // Requirement 1 & 3: Notify cancelled shift users
+    affectedUserIds.forEach((uId) => {
+      const u = users.find((x) => x.id === uId);
+      if (!u) return;
+      if (!u.lineUserId) {
+        console.warn(`[LINE Push Skip] ผู้ใช้ "${u.nickname || u.name || u.username}" (ID: ${uId}) ยังไม่มี lineUserId ผูกกับบัญชี ข้ามการส่งแจ้งเตือน`);
+        return;
+      }
+      const partText = shift.type === 'bathing' ? 'เวรอาบน้ำ' : 'เวรประจำวัน';
+      const formattedDate = formatDateDisplay(shift.date);
+      const msg = `❌ แจ้งเตือนยกเลิกเวร: เวรของคุณในวันที่ ${formattedDate} ช่วงเวลา ${partText} ถูกยกเลิกโดย Admin`;
+      sendLinePushNotification(u.lineUserId, msg);
+    });
+
     return true;
   };
 
