@@ -4,7 +4,12 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import { initializeApp, getApps } from 'firebase/app';
 import { getFirestore, collection, getDocs, doc, setDoc } from 'firebase/firestore';
-import { handleLinePushNotification, handleLineTriggerScheduledReminders } from './api/_shared.js';
+import {
+  handleLinePushNotification,
+  handleLineTriggerScheduledReminders,
+  handleLineAnnouncementNotify,
+  processAnnouncementLineNotifications,
+} from './api/_shared.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1185,6 +1190,17 @@ async function checkAndSendScheduledReminders(forceRun: boolean = false) {
 app.all(['/api/line/trigger-scheduled-reminders', '/line/trigger-scheduled-reminders'], express.json(), async (req, res) => {
   return handleLineTriggerScheduledReminders(req, res);
 });
+
+app.all(['/api/line/announcement-notify', '/line/announcement-notify'], express.json(), async (req, res) => {
+  return handleLineAnnouncementNotify(req, res);
+});
+
+// Periodic worker: Check every 60 seconds for scheduled announcements or new startAt releases
+setInterval(() => {
+  processAnnouncementLineNotifications().catch((err) => {
+    console.warn('[Server Announcement Worker Error]:', err?.message);
+  });
+}, 60 * 1000);
 
 // Start Express server with Vite in Development mode
 async function startServer() {

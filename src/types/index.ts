@@ -62,6 +62,20 @@ export interface Announcement {
   badge?: string;
   startAt?: string; // ISO 8601 with Thailand offset, e.g. "2026-10-20T08:00:00+07:00"
   endAt?: string;   // ISO 8601 with Thailand offset, e.g. "2026-10-25T18:00:00+07:00"
+  lineNotifyOnPublish?: boolean;
+  lineNotifyScheduledAt?: string[]; // ISO 8601 offset +07:00
+}
+
+export interface AnnouncementLineLog {
+  id: string;                 // = logId
+  announcementId: string;
+  kind: 'publish' | 'scheduled';
+  slotAt?: string;            // ISO of scheduled slot (only for scheduled)
+  status: 'sending' | 'sent';
+  recipientCount: number;
+  successCount: number;
+  failedCount: number;
+  sentAt: string;             // ISO
 }
 
 export interface ActivityLog {

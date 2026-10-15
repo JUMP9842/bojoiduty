@@ -13,6 +13,7 @@ import {
   CheckCircle,
   AlertCircle,
   Timer,
+  Bell,
 } from 'lucide-react';
 
 export const AnnouncementBoard: React.FC = () => {
@@ -37,6 +38,12 @@ export const AnnouncementBoard: React.FC = () => {
   const [startAtInput, setStartAtInput] = useState('');
   const [endAtInput, setEndAtInput] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
+
+  // LINE Notification settings
+  const [lineNotifyOnPublish, setLineNotifyOnPublish] = useState<boolean>(true);
+  const [lineNotifyScheduledAt, setLineNotifyScheduledAt] = useState<string[]>([]);
+  const [newSlotInput, setNewSlotInput] = useState<string>('');
+  const [slotError, setSlotError] = useState<string | null>(null);
 
   // Real-time timer updating nowTimestamp every 30 seconds for minute-precise auto-expiry
   const [nowTimestamp, setNowTimestamp] = useState<number>(() => Date.now());
@@ -76,7 +83,6 @@ export const AnnouncementBoard: React.FC = () => {
     if (!isoStr) return '';
     try {
       const d = new Date(isoStr);
-      // Format to local date time parts
       const y = d.getFullYear();
       const m = String(d.getMonth() + 1).padStart(2, '0');
       const day = String(d.getDate()).padStart(2, '0');
@@ -85,6 +91,23 @@ export const AnnouncementBoard: React.FC = () => {
       return `${y}-${m}-${day}T${h}:${min}`;
     } catch {
       return '';
+    }
+  };
+
+  const formatDisplayTime = (isoStr?: string) => {
+    if (!isoStr) return '';
+    try {
+      const d = new Date(isoStr);
+      const day = d.getDate();
+      const monthShort = [
+        'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
+        'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'
+      ][d.getMonth()];
+      const yearStr = (d.getFullYear() + 543).toString().slice(-2);
+      const timeStr = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      return `${day} ${monthShort} ${yearStr} เวลา ${timeStr} น.`;
+    } catch {
+      return isoStr;
     }
   };
 
@@ -97,6 +120,10 @@ export const AnnouncementBoard: React.FC = () => {
     setBadge('');
     setStartAtInput('');
     setEndAtInput('');
+    setLineNotifyOnPublish(true);
+    setLineNotifyScheduledAt([]);
+    setNewSlotInput('');
+    setSlotError(null);
     setFormError(null);
     setIsFormOpen(true);
   };
@@ -109,6 +136,10 @@ export const AnnouncementBoard: React.FC = () => {
     setBadge(item.badge || '');
     setStartAtInput(formatIsoToInput(item.startAt));
     setEndAtInput(formatIsoToInput(item.endAt));
+    setLineNotifyOnPublish(item.lineNotifyOnPublish !== false);
+    setLineNotifyScheduledAt(item.lineNotifyScheduledAt || []);
+    setNewSlotInput('');
+    setSlotError(null);
     setFormError(null);
     setIsFormOpen(true);
   };
@@ -117,6 +148,59 @@ export const AnnouncementBoard: React.FC = () => {
     setIsFormOpen(false);
     setEditingId(null);
     setFormError(null);
+    setSlotError(null);
+  };
+
+  const handleAddScheduledSlot = () => {
+    setSlotError(null);
+    if (!newSlotInput || !newSlotInput.trim()) {
+      setSlotError('กรุณาเลือกวันที่และเวลาที่ต้องการแจ้งเตือน');
+      return;
+    }
+    const slotIso = formatInputToThaiIso(newSlotInput);
+    if (!slotIso) {
+      setSlotError('รูปแบบวันที่และเวลาไม่ถูกต้อง');
+      return;
+    }
+
+    const slotTs = new Date(slotIso).getTime();
+    if (isNaN(slotTs)) {
+      setSlotError('รูปแบบวันที่และเวลาไม่ถูกต้อง');
+      return;
+    }
+
+    // Validate that slot is within [startAt, endAt] if set
+    const startIso = formatInputToThaiIso(startAtInput);
+    const endIso = formatInputToThaiIso(endAtInput);
+    if (startIso) {
+      const startTs = new Date(startIso).getTime();
+      if (slotTs < startTs) {
+        setSlotError(`เวลาแจ้งเตือนต้องไม่เกิดก่อนเวลาเริ่มเผยแพร่ (${formatDisplayTime(startIso)})`);
+        return;
+      }
+    }
+    if (endIso) {
+      const endTs = new Date(endIso).getTime();
+      if (slotTs > endTs) {
+        setSlotError(`เวลาแจ้งเตือนต้องไม่อยู่หลังเวลาสิ้นสุด (${formatDisplayTime(endIso)})`);
+        return;
+      }
+    }
+
+    if (lineNotifyScheduledAt.includes(slotIso)) {
+      setSlotError('มีเวลาแจ้งเตือนนี้ในรายการแล้ว');
+      return;
+    }
+
+    const updated = [...lineNotifyScheduledAt, slotIso].sort(
+      (a, b) => new Date(a).getTime() - new Date(b).getTime()
+    );
+    setLineNotifyScheduledAt(updated);
+    setNewSlotInput('');
+  };
+
+  const handleRemoveScheduledSlot = (indexToRemove: number) => {
+    setLineNotifyScheduledAt((prev) => prev.filter((_, idx) => idx !== indexToRemove));
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -140,6 +224,22 @@ export const AnnouncementBoard: React.FC = () => {
       }
     }
 
+    // Validate that all scheduled slots still fall within [startIso, endIso]
+    if (startIso || endIso) {
+      const startTs = startIso ? new Date(startIso).getTime() : 0;
+      const endTs = endIso ? new Date(endIso).getTime() : Infinity;
+      const invalidSlot = lineNotifyScheduledAt.find((s) => {
+        const t = new Date(s).getTime();
+        return t < startTs || t > endTs;
+      });
+      if (invalidSlot) {
+        setFormError(
+          `มีเวลาแจ้งเตือน LINE (${formatDisplayTime(invalidSlot)}) อยู่นอกช่วงเวลาเผยแพร่ กรุณาลบออกหรือปรับช่วงเวลา`
+        );
+        return;
+      }
+    }
+
     if (editingId) {
       const existing = announcements.find((a) => a.id === editingId);
       if (existing) {
@@ -151,6 +251,8 @@ export const AnnouncementBoard: React.FC = () => {
           badge: badge.trim() || undefined,
           startAt: startIso,
           endAt: endIso,
+          lineNotifyOnPublish,
+          lineNotifyScheduledAt,
         };
         updateAnnouncement(updatedAnn);
       }
@@ -161,7 +263,9 @@ export const AnnouncementBoard: React.FC = () => {
         date,
         badge.trim() || undefined,
         startIso,
-        endIso
+        endIso,
+        lineNotifyOnPublish,
+        lineNotifyScheduledAt
       );
     }
 
@@ -179,23 +283,6 @@ export const AnnouncementBoard: React.FC = () => {
   const activeCount = announcements.filter(
     (a) => getAnnouncementStatus(a, nowTimestamp) === 'active'
   ).length;
-
-  const formatDisplayTime = (isoStr?: string) => {
-    if (!isoStr) return '';
-    try {
-      const d = new Date(isoStr);
-      const day = d.getDate();
-      const monthShort = [
-        'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
-        'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'
-      ][d.getMonth()];
-      const yearStr = (d.getFullYear() + 543).toString().slice(-2);
-      const timeStr = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
-      return `${day} ${monthShort} ${yearStr} เวลา ${timeStr} น.`;
-    } catch {
-      return isoStr;
-    }
-  };
 
   return (
     <section className="mb-8">
@@ -336,6 +423,101 @@ export const AnnouncementBoard: React.FC = () => {
             </p>
           </div>
 
+          {/* LINE OA Notification Controls */}
+          <div className="p-3.5 mb-3 rounded-xl bg-emerald-50/60 border border-emerald-300 space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="text-base leading-none">📢</span>
+              <span className="text-xs font-bold text-emerald-950">
+                การแจ้งเตือนเข้า LINE OA สมาชิกอัตโนมัติ:
+              </span>
+            </div>
+
+            {/* Checkbox: Notify on Publish */}
+            <label className="flex items-start gap-2.5 cursor-pointer bg-white p-2.5 rounded-lg border border-emerald-200 hover:border-emerald-400 transition-colors">
+              <input
+                type="checkbox"
+                checked={lineNotifyOnPublish}
+                onChange={(e) => setLineNotifyOnPublish(e.target.checked)}
+                className="mt-0.5 w-4 h-4 text-emerald-600 rounded-sm focus:ring-emerald-500 cursor-pointer accent-[#06C755]"
+              />
+              <div className="text-[11px]">
+                <div className="font-bold text-neutral-900">
+                  ส่งแจ้งเตือนเข้า LINE OA เมื่อประกาศเริ่มเผยแพร่
+                </div>
+                <div className="text-neutral-500 text-[10px] mt-0.5 leading-relaxed">
+                  • หากไม่ได้ตั้งเวลาเริ่ม (หรือเวลาผ่านมาแล้ว): ส่งเข้า LINE ของสมาชิกทุกคนทันทีที่บันทึก<br />
+                  • หากตั้งเวลาเริ่มต้นในอนาคต: ระบบจะส่งเข้า LINE อัตโนมัติเมื่อถึงเวลาเริ่มเผยแพร่
+                </div>
+              </div>
+            </label>
+
+            {/* Multiple Scheduled Notification Times */}
+            <div className="bg-white p-2.5 rounded-lg border border-emerald-200 space-y-2">
+              <div className="flex items-center gap-1.5 text-[11px] font-bold text-neutral-800">
+                <Bell className="w-3.5 h-3.5 text-emerald-600" />
+                <span>ตั้งเวลาส่งแจ้งเตือน LINE เพิ่มเติม (เลือกได้หลายเวลาตามต้องการ):</span>
+              </div>
+              <p className="text-[10px] text-neutral-500">
+                * ต้องอยู่ในช่วงเวลาเผยแพร่ของประกาศนี้
+              </p>
+
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                <input
+                  type="datetime-local"
+                  value={newSlotInput}
+                  onChange={(e) => {
+                    setNewSlotInput(e.target.value);
+                    setSlotError(null);
+                  }}
+                  className="flex-1 px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-neutral-50 border border-neutral-300 focus:border-emerald-500 focus:bg-white focus:outline-hidden text-neutral-800"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddScheduledSlot}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-1 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>เพิ่มเวลาเตือน</span>
+                </button>
+              </div>
+
+              {slotError && (
+                <div className="text-[11px] text-red-600 font-semibold flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3 text-red-500 shrink-0" />
+                  <span>{slotError}</span>
+                </div>
+              )}
+
+              {/* Scheduled slots chips */}
+              {lineNotifyScheduledAt.length > 0 && (
+                <div className="pt-1.5 space-y-1.5">
+                  <span className="text-[10px] font-bold text-neutral-600">
+                    รายการเวลาที่จะส่ง LINE ({lineNotifyScheduledAt.length} เวลา):
+                  </span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {lineNotifyScheduledAt.map((slotIso, idx) => (
+                      <div
+                        key={slotIso + idx}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-emerald-100/90 border border-emerald-300 text-emerald-950 text-[10px] font-bold shadow-2xs"
+                      >
+                        <Clock className="w-3 h-3 text-emerald-700" />
+                        <span>{formatDisplayTime(slotIso)}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveScheduledSlot(idx)}
+                          className="ml-1 text-neutral-400 hover:text-red-600 transition-colors cursor-pointer"
+                          title="ลบเวลานี้"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
           <div className="flex items-center justify-between gap-3 pt-2">
             <div className="flex items-center gap-2">
               <Tag className="w-3.5 h-3.5 text-neutral-950" />
@@ -380,6 +562,8 @@ export const AnnouncementBoard: React.FC = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
           {visibleAnnouncements.map((item) => {
             const status = getAnnouncementStatus(item, nowTimestamp);
+            const hasPublishLine = item.lineNotifyOnPublish !== false;
+            const schedCount = Array.isArray(item.lineNotifyScheduledAt) ? item.lineNotifyScheduledAt.length : 0;
 
             return (
               <div
@@ -423,6 +607,24 @@ export const AnnouncementBoard: React.FC = () => {
                               <span>กำลังเผยแพร่</span>
                             </span>
                           )}
+                          {hasPublishLine && (
+                            <span
+                              className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 font-bold border border-emerald-300 flex items-center gap-1"
+                              title="ส่งแจ้งเตือนเข้า LINE OA อัตโนมัติเมื่อเริ่มเผยแพร่"
+                            >
+                              <span>💬</span>
+                              <span>LINE เผยแพร่</span>
+                            </span>
+                          )}
+                          {schedCount > 0 && (
+                            <span
+                              className="text-[10px] px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-800 font-bold border border-emerald-300 flex items-center gap-1"
+                              title={`ตั้งเวลาส่ง LINE เพิ่มเติม ${schedCount} เวลา`}
+                            >
+                              <Bell className="w-3 h-3 text-emerald-600" />
+                              <span>เตือน {schedCount} เวลา</span>
+                            </span>
+                          )}
                         </>
                       )}
 
@@ -463,7 +665,7 @@ export const AnnouncementBoard: React.FC = () => {
 
                   {/* Active Time Window details if set */}
                   {(item.startAt || item.endAt) && (
-                    <div className="mb-3 p-2 rounded-xl bg-neutral-100/80 border border-neutral-200 text-[10px] font-semibold text-neutral-600 flex flex-col gap-0.5">
+                    <div className="mb-2 p-2 rounded-xl bg-neutral-100/80 border border-neutral-200 text-[10px] font-semibold text-neutral-600 flex flex-col gap-0.5">
                       {item.startAt && (
                         <div>
                           <span>🟢 เริ่ม: </span>
@@ -476,6 +678,26 @@ export const AnnouncementBoard: React.FC = () => {
                           <span className="font-bold text-neutral-800">{formatDisplayTime(item.endAt)}</span>
                         </div>
                       )}
+                    </div>
+                  )}
+
+                  {/* Admin Scheduled LINE notice times preview */}
+                  {isAdmin && schedCount > 0 && (
+                    <div className="mb-2 p-2 rounded-xl bg-emerald-50/80 border border-emerald-200 text-[10px] text-emerald-900 flex flex-col gap-1">
+                      <div className="font-bold flex items-center gap-1 text-emerald-800">
+                        <Bell className="w-3 h-3 text-emerald-600" />
+                        <span>กำหนดการเตือน LINE ({schedCount} ครั้ง):</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {item.lineNotifyScheduledAt!.map((s, idx) => (
+                          <span
+                            key={s + idx}
+                            className="px-1.5 py-0.5 bg-white rounded border border-emerald-200 font-semibold text-[9px]"
+                          >
+                            {formatDisplayTime(s)}
+                          </span>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>

@@ -163,6 +163,12 @@
     "/settings/{settingId}": {
       "schema": { "$ref": "#/entities/DogProfile" },
       "description": "Dog care settings and profile"
+    },
+    "/announcement_line_logs/{logId}": {
+      "description": "Line notification locks and audit logs for announcements"
+    },
+    "/reminder_logs/{logId}": {
+      "description": "Line duty reminder delivery locks"
     }
   }
 }

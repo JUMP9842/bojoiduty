@@ -1,4 +1,4 @@
-import { handleLineOAuthCallback, handleLineLoginUrl, handleLineConfig, sendJson } from './_shared.js';
+import { handleLineOAuthCallback, handleLineLoginUrl, handleLineConfig, handleLineAnnouncementNotify, sendJson } from './_shared.js';
 
 export default async function handler(req: any, res: any) {
   const url = req.url || '';
@@ -13,6 +13,10 @@ export default async function handler(req: any, res: any) {
 
   if (url.includes('/line/config')) {
     return handleLineConfig(req, res);
+  }
+
+  if (url.includes('/line/announcement-notify')) {
+    return handleLineAnnouncementNotify(req, res);
   }
 
   if (url.includes('/line/webhook')) {

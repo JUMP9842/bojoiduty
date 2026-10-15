@@ -477,6 +477,223 @@ async function acquireReminderLockFirestore(logKey: string): Promise<boolean> {
   }
 }
 
+// REST helper to patch Firestore document fields
+export async function patchFirestoreDocRest(collectionName: string, id: string, fields: Record<string, any>): Promise<boolean> {
+  try {
+    const fieldPaths = Object.keys(fields);
+    if (fieldPaths.length === 0) return true;
+    const query = fieldPaths.map((f) => `updateMask.fieldPaths=${encodeURIComponent(f)}`).join('&');
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIRESTORE_DATABASE_ID}/documents/${collectionName}/${encodeURIComponent(id)}?${query}`;
+
+    const convertedFields: Record<string, any> = {};
+    for (const [key, val] of Object.entries(fields)) {
+      if (typeof val === 'string') convertedFields[key] = { stringValue: val };
+      else if (typeof val === 'number') {
+        if (Number.isInteger(val)) convertedFields[key] = { integerValue: String(val) };
+        else convertedFields[key] = { doubleValue: val };
+      } else if (typeof val === 'boolean') convertedFields[key] = { booleanValue: val };
+      else if (val === null || val === undefined) convertedFields[key] = { nullValue: null };
+      else if (Array.isArray(val)) {
+        convertedFields[key] = {
+          arrayValue: {
+            values: val.map((v) => ({ stringValue: String(v) })),
+          },
+        };
+      }
+    }
+
+    const res = await fetch(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields: convertedFields }),
+    });
+
+    if (!res.ok) {
+      const err = await res.text().catch(() => '');
+      console.warn(`[Firestore REST PATCH ${collectionName}/${id} Warning ${res.status}]:`, err);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn(`[Firestore REST PATCH ${collectionName}/${id} Error]:`, err);
+    return false;
+  }
+}
+
+// REST helper to delete Firestore document
+export async function deleteFirestoreDocRest(collectionName: string, id: string): Promise<boolean> {
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIRESTORE_DATABASE_ID}/documents/${collectionName}/${encodeURIComponent(id)}`;
+    const res = await fetch(url, { method: 'DELETE' });
+    return res.ok;
+  } catch (err) {
+    console.warn(`[Firestore REST DELETE ${collectionName}/${id} Error]:`, err);
+    return false;
+  }
+}
+
+// Acquire lock document for announcement LINE notification
+export async function acquireAnnouncementLineLock(
+  logId: string,
+  fields: Record<string, any>
+): Promise<{ acquired: boolean; reason?: string }> {
+  try {
+    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIRESTORE_DATABASE_ID}/documents/announcement_line_logs?documentId=${encodeURIComponent(logId)}`;
+
+    const convertedFields: Record<string, any> = {};
+    for (const [key, val] of Object.entries(fields)) {
+      if (typeof val === 'string') convertedFields[key] = { stringValue: val };
+      else if (typeof val === 'number') {
+        if (Number.isInteger(val)) convertedFields[key] = { integerValue: String(val) };
+        else convertedFields[key] = { doubleValue: val };
+      } else if (typeof val === 'boolean') convertedFields[key] = { booleanValue: val };
+      else if (val === null || val === undefined) convertedFields[key] = { nullValue: null };
+      else if (Array.isArray(val)) {
+        convertedFields[key] = {
+          arrayValue: {
+            values: val.map((v) => ({ stringValue: String(v) })),
+          },
+        };
+      }
+    }
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fields: convertedFields }),
+    });
+
+    if (res.status === 200 || res.status === 201) {
+      return { acquired: true };
+    }
+
+    if (res.status === 409) {
+      return { acquired: false, reason: 'already_sent' };
+    }
+
+    const errText = await res.text().catch(() => '');
+    console.error(`[Announcement Line Lock Error ${res.status}]`, logId, errText);
+    return { acquired: false, reason: `lock_failed_${res.status}` };
+  } catch (err: any) {
+    console.error('[Announcement Line Lock Exception]', logId, err?.message || String(err));
+    return { acquired: false, reason: 'lock_failed_network' };
+  }
+}
+
+// Get unique recipient lineUserIds from users list
+export function getAnnouncementLineRecipients(users: any[]): string[] {
+  const lineUserIds = new Set<string>();
+  for (const u of users) {
+    const uid = (u.lineUserId || '').trim();
+    if (uid.startsWith('U') && uid.length >= 30 && u.lineNotificationEnabled !== false) {
+      lineUserIds.add(uid);
+    }
+  }
+  return Array.from(lineUserIds);
+}
+
+// Format ISO string to Thai date and time in Asia/Bangkok timezone
+export function formatThaiDateTimeBangkok(iso?: string): string {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    const parts = new Intl.DateTimeFormat('th-TH', {
+      timeZone: 'Asia/Bangkok',
+      day: 'numeric',
+      month: 'short',
+      year: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(d);
+
+    const day = parts.find((p) => p.type === 'day')?.value || '';
+    const month = parts.find((p) => p.type === 'month')?.value || '';
+    const year = parts.find((p) => p.type === 'year')?.value || '';
+    const hour = parts.find((p) => p.type === 'hour')?.value || '00';
+    const minute = parts.find((p) => p.type === 'minute')?.value || '00';
+    return `${day} ${month} ${year} เวลา ${hour}:${minute} น.`;
+  } catch {
+    return iso;
+  }
+}
+
+// Build LINE announcement message
+export function buildAnnouncementLineMessage(ann: any, kind: 'publish' | 'scheduled', config: any) {
+  const header = kind === 'publish' ? '📢 ประกาศใหม่ [BojoiDuty]' : '⏰ เตือนประกาศ [BojoiDuty]';
+  const lines: string[] = [header];
+
+  if (ann.badge && typeof ann.badge === 'string' && ann.badge.trim()) {
+    lines.push(`🏷 ${ann.badge.trim()}`);
+  }
+
+  lines.push('');
+  lines.push(ann.title || 'ประกาศ');
+  lines.push('');
+
+  let content = (ann.content || '').trim();
+  if (content.length > 900) {
+    content = content.slice(0, 900) + '…';
+  }
+  lines.push(content);
+  lines.push('');
+
+  lines.push(`🗓 วันที่เกี่ยวข้อง: ${formatThaiDateDisplay(ann.date)}`);
+  if (ann.endAt) {
+    lines.push(`⌛ แสดงถึง: ${formatThaiDateTimeBangkok(ann.endAt)}`);
+  }
+  lines.push(`✍️ โดย ${ann.authorName || 'ทีมงาน'}`);
+  lines.push(`👉 ${config.publicSiteUrl || 'https://bojoiduty.vercel.app'}`);
+
+  return {
+    type: 'text',
+    text: lines.join('\n'),
+    quickReply: getLineQuickReplyItems(),
+  };
+}
+
+// Multicast message to LINE in chunks of up to 500 recipients
+export async function multicastLine(
+  token: string,
+  userIds: string[],
+  messages: any[]
+): Promise<{ successCount: number; failedCount: number; errors: any[] }> {
+  let successCount = 0;
+  let failedCount = 0;
+  const errors: any[] = [];
+
+  for (let i = 0; i < userIds.length; i += 500) {
+    const chunk = userIds.slice(i, i + 500);
+    try {
+      const res = await fetch('https://api.line.me/v2/bot/message/multicast', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          to: chunk,
+          messages,
+        }),
+      });
+
+      if (res.ok) {
+        successCount += chunk.length;
+      } else {
+        failedCount += chunk.length;
+        const errJson = await res.json().catch(() => ({}));
+        errors.push({ status: res.status, error: errJson });
+      }
+    } catch (err: any) {
+      failedCount += chunk.length;
+      errors.push({ error: err?.message || String(err) });
+    }
+  }
+
+  return { successCount, failedCount, errors };
+}
+
 export function getLineQuickReplyItems() {
   return {
     items: [
@@ -902,5 +1119,184 @@ export async function handleLineTriggerScheduledReminders(req: any, res: any) {
     return sendJson(res, 200, { success: true, sentCount, results });
   } catch (err: any) {
     return sendJson(res, 200, { success: false, error: err?.message || String(err), sentCount: 0 });
+  }
+}
+
+// 6. Process Announcement Line Notifications (Publish + Scheduled Timing)
+export async function processAnnouncementLineNotifications(opts?: { onlyAnnouncementId?: string }): Promise<{
+  success: boolean;
+  processed?: number;
+  sent?: number;
+  skipped?: number;
+  reason?: string;
+  results?: string[];
+}> {
+  try {
+    const config = getLineConfig();
+    const token = config.lineAccessToken;
+    if (!token || token.length < 50) {
+      return { success: false, reason: 'no_token' };
+    }
+
+    let [announcements, users] = await Promise.all([
+      fetchCollectionFromFirestoreRest('announcements'),
+      fetchCollectionFromFirestoreRest('users'),
+    ]);
+
+    if (opts?.onlyAnnouncementId) {
+      announcements = announcements.filter((a) => a.id === opts.onlyAnnouncementId);
+      if (announcements.length === 0) {
+        return { success: true, processed: 0, sent: 0, skipped: 0, results: ['not_found'] };
+      }
+    }
+
+    const now = Date.now();
+
+    // Filter active announcements: not before startAt, not after endAt
+    const activeAnnouncements = announcements.filter((ann) => {
+      const startTs = ann.startAt ? Date.parse(ann.startAt) : 0;
+      const endTs = ann.endAt ? Date.parse(ann.endAt) : Infinity;
+      return now >= startTs && now <= endTs;
+    });
+
+    const jobs: Array<{
+      ann: any;
+      logId: string;
+      kind: 'publish' | 'scheduled';
+      slotAt?: string;
+    }> = [];
+
+    for (const ann of activeAnnouncements) {
+      if (ann.lineNotifyOnPublish === true) {
+        jobs.push({
+          ann,
+          logId: `${ann.id}__publish`,
+          kind: 'publish',
+        });
+      }
+
+      const scheduledList = Array.isArray(ann.lineNotifyScheduledAt) ? ann.lineNotifyScheduledAt : [];
+      for (const slotAt of scheduledList) {
+        if (typeof slotAt === 'string' && slotAt.trim()) {
+          const slotTs = Date.parse(slotAt.trim());
+          const startTs = ann.startAt ? Date.parse(ann.startAt) : 0;
+          const endTs = ann.endAt ? Date.parse(ann.endAt) : Infinity;
+          if (!isNaN(slotTs) && slotTs <= now && slotTs >= startTs && slotTs <= endTs) {
+            jobs.push({
+              ann,
+              logId: `${ann.id}__sched__${slotTs}`,
+              kind: 'scheduled',
+              slotAt: slotAt.trim(),
+            });
+          }
+        }
+      }
+    }
+
+    const recipientIds = getAnnouncementLineRecipients(users);
+    let processed = 0;
+    let sent = 0;
+    let skipped = 0;
+    const results: string[] = [];
+
+    for (const job of jobs) {
+      processed++;
+      const nowIso = new Date().toISOString();
+
+      const initialFields: Record<string, any> = {
+        announcementId: job.ann.id,
+        kind: job.kind,
+        status: 'sending',
+        recipientCount: recipientIds.length,
+        successCount: 0,
+        failedCount: 0,
+        sentAt: nowIso,
+      };
+      if (job.slotAt) {
+        initialFields.slotAt = job.slotAt;
+      }
+
+      const lock = await acquireAnnouncementLineLock(job.logId, initialFields);
+      if (!lock.acquired) {
+        skipped++;
+        results.push(`[Skip ${job.logId}]: ${lock.reason || 'lock_not_acquired'}`);
+        continue;
+      }
+
+      if (recipientIds.length === 0) {
+        await patchFirestoreDocRest('announcement_line_logs', job.logId, {
+          status: 'sent',
+          recipientCount: 0,
+          successCount: 0,
+          failedCount: 0,
+          sentAt: new Date().toISOString(),
+        });
+        results.push(`[Sent ${job.logId}]: 0 recipients`);
+        sent++;
+        continue;
+      }
+
+      const message = buildAnnouncementLineMessage(job.ann, job.kind, config);
+      const multiRes = await multicastLine(token, recipientIds, [message]);
+
+      if (multiRes.successCount === 0 && recipientIds.length > 0) {
+        await deleteFirestoreDocRest('announcement_line_logs', job.logId);
+        console.error('[Announcement Line Notification Failed]', job.logId, multiRes.errors);
+        results.push(`[Failed ${job.logId}]: All ${recipientIds.length} failed, lock deleted`);
+      } else {
+        await patchFirestoreDocRest('announcement_line_logs', job.logId, {
+          status: 'sent',
+          successCount: multiRes.successCount,
+          failedCount: multiRes.failedCount,
+          sentAt: new Date().toISOString(),
+        });
+        sent++;
+        results.push(`[Sent ${job.logId}]: ${multiRes.successCount}/${recipientIds.length}`);
+      }
+    }
+
+    return { success: true, processed, sent, skipped, results };
+  } catch (err: any) {
+    console.error('[Process Announcement Line Notifications Error]:', err);
+    return { success: false, reason: err?.message || String(err) };
+  }
+}
+
+// 7. Announcement Line Notification Endpoint Handler
+export async function handleLineAnnouncementNotify(req: any, res: any) {
+  try {
+    const config = getLineConfig();
+    const authHeader = (req?.headers?.authorization || req?.headers?.['authorization'] || '').trim();
+    const bearerToken = authHeader.replace(/^Bearer\s+/i, '').trim();
+    const isVercelCron = !!req?.headers?.['x-vercel-cron'];
+
+    const expectedCronSecret = (process.env.CRON_SECRET || 'bojoiduty_cron_secret_2026').trim();
+    const expectedChannelSecret = (process.env.LINE_CHANNEL_SECRET || config.lineChannelSecret || '').trim();
+
+    const isCron =
+      isVercelCron ||
+      (bearerToken && (bearerToken === expectedCronSecret || bearerToken === expectedChannelSecret)) ||
+      (req?.body?.cronSecret && req.body.cronSecret === expectedCronSecret) ||
+      req?.query?.cron === 'true' ||
+      req?.body?.cron === true ||
+      req?.body?.triggerAll === true ||
+      req?.method === 'GET';
+
+    if (isCron) {
+      const result = await processAnnouncementLineNotifications();
+      return sendJson(res, 200, result);
+    }
+
+    if (req.method === 'POST' && typeof req?.body?.announcementId === 'string' && req.body.announcementId.trim()) {
+      const result = await processAnnouncementLineNotifications({
+        onlyAnnouncementId: req.body.announcementId.trim(),
+      });
+      return sendJson(res, 200, result);
+    }
+
+    return sendJson(res, 200, { success: false, error: 'bad request' });
+  } catch (err: any) {
+    console.error('[handleLineAnnouncementNotify Exception]:', err);
+    return sendJson(res, 200, { success: false, error: err?.message || String(err) });
   }
 }

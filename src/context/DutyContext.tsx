@@ -33,7 +33,7 @@ import {
   getDoc,
 } from 'firebase/firestore';
 import { getShiftMorningUserId, getShiftEveningUserId } from '../utils/shiftUtils';
-import { getApiUrl } from '../utils/apiUtils';
+import { getApiUrl, safeFetchJson } from '../utils/apiUtils';
 
 const DEFAULT_LINE_ACCESS_TOKEN =
   'KuXbOznb4aCQvDid2OyJ8F4+k3o221q6owdzubhHzw0hNexdEEw+3bYMMY4EhgjA/UQ6WvBR5/Zyy1WgjZwITGugy5rnBqMnkBBpqJY4NGVHmd1wfImEstyXPUV3blruSEEwn+ywp8PHBBIk0smvYgdB04t89/1O/w1cDnyilFU=';
@@ -141,7 +141,16 @@ interface DutyContextType {
   respondSwapRequest: (requestId: string, accept: boolean) => void;
   cancelSwapRequest: (requestId: string) => void;
   announcements: Announcement[];
-  addAnnouncement: (title: string, content: string, date: string, badge?: string, startAt?: string, endAt?: string) => void;
+  addAnnouncement: (
+    title: string,
+    content: string,
+    date: string,
+    badge?: string,
+    startAt?: string,
+    endAt?: string,
+    lineNotifyOnPublish?: boolean,
+    lineNotifyScheduledAt?: string[]
+  ) => void;
   updateAnnouncement: (announcement: Announcement) => void;
   deleteAnnouncement: (id: string) => void;
   activityLogs: ActivityLog[];
@@ -1542,7 +1551,9 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
     date: string,
     badge?: string,
     startAt?: string,
-    endAt?: string
+    endAt?: string,
+    lineNotifyOnPublish?: boolean,
+    lineNotifyScheduledAt?: string[]
   ) => {
     const newAnn: Announcement = {
       id: 'ann-' + Date.now(),
@@ -1556,16 +1567,32 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
       badge: badge || '',
       startAt: startAt || undefined,
       endAt: endAt || undefined,
+      lineNotifyOnPublish: lineNotifyOnPublish ?? true,
+      lineNotifyScheduledAt: lineNotifyScheduledAt || [],
     };
     setAnnouncements((prev) => [newAnn, ...prev]);
     safeSetDoc(doc(db, 'announcements', newAnn.id), newAnn).catch(console.warn);
     addLog('announcement_create', `เพิ่มประกาศใหม่: "${title}"`);
+
+    // Trigger server-side LINE notification evaluation
+    safeFetchJson(getApiUrl('/api/line/announcement-notify'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ announcementId: newAnn.id }),
+    }).catch(console.warn);
   };
 
   const updateAnnouncement = async (updatedAnn: Announcement) => {
     setAnnouncements((prev) => prev.map((a) => (a.id === updatedAnn.id ? updatedAnn : a)));
     safeSetDoc(doc(db, 'announcements', updatedAnn.id), updatedAnn).catch(console.warn);
     addLog('announcement_update', `ปรับปรุงประกาศ: "${updatedAnn.title}"`);
+
+    // Trigger server-side LINE notification evaluation
+    safeFetchJson(getApiUrl('/api/line/announcement-notify'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ announcementId: updatedAnn.id }),
+    }).catch(console.warn);
   };
 
   const deleteAnnouncement = async (id: string) => {
