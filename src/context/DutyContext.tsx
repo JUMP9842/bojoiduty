@@ -517,7 +517,7 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const data = res ? await res.json().catch(() => null) : null;
       const httpStatus = res ? res.status : 0;
 
-      if (res && res.ok && data?.success) {
+      if (res && res.ok && data?.success !== false) {
         console.log(`[LINE Push Success]: Delivered to ${userName} (${lineUserId})`);
         if (showDiagnosticAlert) {
           window.alert(`ส่งแจ้งเตือน LINE สำเร็จไปยัง ${userName} (LINE ID: ${lineUserId})`);
