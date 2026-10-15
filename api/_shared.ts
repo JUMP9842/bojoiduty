@@ -1,4 +1,6 @@
 // Shared utility for Vercel Serverless Functions & Express Server
+import { initializeApp, getApps } from 'firebase/app';
+import { getFirestore, collection, getDocs, doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
 
 export const DEFAULT_LINE_CONFIG = {
   lineChannelId: '2011986358',
@@ -410,65 +412,66 @@ export function handleLineConfig(req: any, res: any) {
   }
 }
 
-const FIREBASE_PROJECT_ID = 'feisty-quasar-q53bd';
-const FIRESTORE_DATABASE_ID = 'ai-studio-pawsduty-53653dc7-02ef-4c8b-a749-e32b6a62213f';
+const FALLBACK_FIREBASE_CONFIG = {
+  projectId: 'feisty-quasar-q53bd',
+  appId: '1:388800385483:web:6cf3b76992d27ecb89a64e',
+  apiKey: 'AIzaSyDkCS6LtGhrk0kU8WSfwDcMOv1QXexyrAg',
+  authDomain: 'feisty-quasar-q53bd.firebaseapp.com',
+  firestoreDatabaseId: 'ai-studio-pawsduty-53653dc7-02ef-4c8b-a749-e32b6a62213f',
+  storageBucket: 'feisty-quasar-q53bd.firebasestorage.app',
+  messagingSenderId: '388800385483',
+};
 
-// Ultra-fast lightweight REST helper for Firestore in Serverless Functions
-async function fetchCollectionFromFirestoreRest(collectionName: string): Promise<any[]> {
-  try {
-    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIRESTORE_DATABASE_ID}/documents/${collectionName}?pageSize=300`;
-    const res = await fetch(url);
-    if (!res.ok) return [];
-    const data = await res.json();
-    if (!data.documents || !Array.isArray(data.documents)) return [];
-
-    return data.documents.map((doc: any) => {
-      const id = doc.name ? doc.name.split('/').pop() : '';
-      const fields = doc.fields || {};
-      const obj: any = { id };
-      for (const [key, valObj] of Object.entries<any>(fields)) {
-        if (valObj.stringValue !== undefined) obj[key] = valObj.stringValue;
-        else if (valObj.booleanValue !== undefined) obj[key] = valObj.booleanValue;
-        else if (valObj.integerValue !== undefined) obj[key] = Number(valObj.integerValue);
-        else if (valObj.doubleValue !== undefined) obj[key] = Number(valObj.doubleValue);
-        else if (valObj.nullValue !== undefined) obj[key] = null;
-        else if (valObj.mapValue !== undefined) obj[key] = valObj.mapValue;
-        else if (valObj.arrayValue !== undefined) {
-          obj[key] = (valObj.arrayValue.values || []).map((v: any) => v.stringValue || v.integerValue || v);
-        }
-      }
-      return obj;
-    });
-  } catch (e) {
-    console.warn(`[Firestore REST ${collectionName} Warning]:`, e);
-    return [];
+let sharedDb: any = null;
+export function getSharedFirestore() {
+  if (!sharedDb) {
+    try {
+      const existing = getApps();
+      const fApp = existing.find((a) => a.name === 'shared-app') || existing[0] || initializeApp(FALLBACK_FIREBASE_CONFIG, 'shared-app');
+      sharedDb = getFirestore(fApp, FALLBACK_FIREBASE_CONFIG.firestoreDatabaseId);
+    } catch (e) {
+      console.warn('[Shared Firestore Init Notice]:', e);
+    }
   }
+  return sharedDb;
 }
 
-// Atomic lock and persistence helper in Firestore to prevent race conditions and duplicate sends across cold starts
+// Fetch all documents from a Firestore collection using Firebase SDK
+export async function fetchCollectionFromFirestore(collectionName: string): Promise<any[]> {
+  try {
+    const db = getSharedFirestore();
+    if (db) {
+      const snap = await getDocs(collection(db, collectionName));
+      return snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+    }
+  } catch (err: any) {
+    console.warn(`[Firestore SDK ${collectionName} Warning]:`, err?.message || err);
+  }
+  return [];
+}
+
+const sentRemindersLog = new Set<string>();
+const sentAnnouncementLocks = new Set<string>();
+
+// Atomic lock and persistence helper in Firestore
 async function acquireReminderLockFirestore(logKey: string): Promise<boolean> {
   if (!logKey) return false;
+  if (sentRemindersLog.has(logKey)) return false;
   try {
-    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIRESTORE_DATABASE_ID}/documents/reminder_logs?documentId=${encodeURIComponent(logKey)}`;
-    const body = {
-      fields: {
-        logKey: { stringValue: logKey },
-        sentAt: { stringValue: new Date().toISOString() },
-      },
-    };
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-
-    if (res.status === 200 || res.status === 201) {
+    const db = getSharedFirestore();
+    if (!db) {
       sentRemindersLog.add(logKey);
-      return true; // Lock acquired!
+      return true;
     }
-
-    // 409 Conflict ALREADY_EXISTS -> Lock already held, skip sending
-    return false;
+    const docRef = doc(db, 'reminder_logs', logKey);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      sentRemindersLog.add(logKey);
+      return false;
+    }
+    await setDoc(docRef, { logKey, sentAt: new Date().toISOString() });
+    sentRemindersLog.add(logKey);
+    return true;
   } catch (e) {
     console.warn('[Firestore Reminder Lock Error]:', e);
     if (sentRemindersLog.has(logKey)) return false;
@@ -477,59 +480,35 @@ async function acquireReminderLockFirestore(logKey: string): Promise<boolean> {
   }
 }
 
-// REST helper to patch Firestore document fields
-export async function patchFirestoreDocRest(collectionName: string, id: string, fields: Record<string, any>): Promise<boolean> {
+// Helper to patch Firestore document fields
+export async function patchFirestoreDoc(collectionName: string, id: string, fields: Record<string, any>): Promise<boolean> {
   try {
-    const fieldPaths = Object.keys(fields);
-    if (fieldPaths.length === 0) return true;
-    const query = fieldPaths.map((f) => `updateMask.fieldPaths=${encodeURIComponent(f)}`).join('&');
-    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIRESTORE_DATABASE_ID}/documents/${collectionName}/${encodeURIComponent(id)}?${query}`;
-
-    const convertedFields: Record<string, any> = {};
-    for (const [key, val] of Object.entries(fields)) {
-      if (typeof val === 'string') convertedFields[key] = { stringValue: val };
-      else if (typeof val === 'number') {
-        if (Number.isInteger(val)) convertedFields[key] = { integerValue: String(val) };
-        else convertedFields[key] = { doubleValue: val };
-      } else if (typeof val === 'boolean') convertedFields[key] = { booleanValue: val };
-      else if (val === null || val === undefined) convertedFields[key] = { nullValue: null };
-      else if (Array.isArray(val)) {
-        convertedFields[key] = {
-          arrayValue: {
-            values: val.map((v) => ({ stringValue: String(v) })),
-          },
-        };
-      }
+    const db = getSharedFirestore();
+    if (db) {
+      const docRef = doc(db, collectionName, id);
+      await setDoc(docRef, fields, { merge: true });
+      return true;
     }
-
-    const res = await fetch(url, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fields: convertedFields }),
-    });
-
-    if (!res.ok) {
-      const err = await res.text().catch(() => '');
-      console.warn(`[Firestore REST PATCH ${collectionName}/${id} Warning ${res.status}]:`, err);
-      return false;
-    }
-    return true;
-  } catch (err) {
-    console.warn(`[Firestore REST PATCH ${collectionName}/${id} Error]:`, err);
-    return false;
+  } catch (err: any) {
+    console.warn(`[Firestore PATCH ${collectionName}/${id} Warning]:`, err?.message || err);
   }
+  return false;
 }
 
-// REST helper to delete Firestore document
-export async function deleteFirestoreDocRest(collectionName: string, id: string): Promise<boolean> {
+// Helper to delete Firestore document
+export async function deleteFirestoreDoc(collectionName: string, id: string): Promise<boolean> {
   try {
-    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIRESTORE_DATABASE_ID}/documents/${collectionName}/${encodeURIComponent(id)}`;
-    const res = await fetch(url, { method: 'DELETE' });
-    return res.ok;
-  } catch (err) {
-    console.warn(`[Firestore REST DELETE ${collectionName}/${id} Error]:`, err);
-    return false;
+    sentAnnouncementLocks.delete(id);
+    const db = getSharedFirestore();
+    if (db) {
+      const docRef = doc(db, collectionName, id);
+      await deleteDoc(docRef);
+      return true;
+    }
+  } catch (err: any) {
+    console.warn(`[Firestore DELETE ${collectionName}/${id} Warning]:`, err?.message || err);
   }
+  return false;
 }
 
 // Acquire lock document for announcement LINE notification
@@ -538,45 +517,31 @@ export async function acquireAnnouncementLineLock(
   fields: Record<string, any>
 ): Promise<{ acquired: boolean; reason?: string }> {
   try {
-    const url = `https://firestore.googleapis.com/v1/projects/${FIREBASE_PROJECT_ID}/databases/${FIRESTORE_DATABASE_ID}/documents/announcement_line_logs?documentId=${encodeURIComponent(logId)}`;
-
-    const convertedFields: Record<string, any> = {};
-    for (const [key, val] of Object.entries(fields)) {
-      if (typeof val === 'string') convertedFields[key] = { stringValue: val };
-      else if (typeof val === 'number') {
-        if (Number.isInteger(val)) convertedFields[key] = { integerValue: String(val) };
-        else convertedFields[key] = { doubleValue: val };
-      } else if (typeof val === 'boolean') convertedFields[key] = { booleanValue: val };
-      else if (val === null || val === undefined) convertedFields[key] = { nullValue: null };
-      else if (Array.isArray(val)) {
-        convertedFields[key] = {
-          arrayValue: {
-            values: val.map((v) => ({ stringValue: String(v) })),
-          },
-        };
-      }
+    if (sentAnnouncementLocks.has(logId)) {
+      return { acquired: false, reason: 'already_sent_mem' };
     }
 
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ fields: convertedFields }),
-    });
-
-    if (res.status === 200 || res.status === 201) {
+    const db = getSharedFirestore();
+    if (!db) {
+      sentAnnouncementLocks.add(logId);
       return { acquired: true };
     }
 
-    if (res.status === 409) {
+    const docRef = doc(db, 'announcement_line_logs', logId);
+    const snap = await getDoc(docRef);
+    if (snap.exists()) {
+      sentAnnouncementLocks.add(logId);
       return { acquired: false, reason: 'already_sent' };
     }
 
-    const errText = await res.text().catch(() => '');
-    console.error(`[Announcement Line Lock Error ${res.status}]`, logId, errText);
-    return { acquired: false, reason: `lock_failed_${res.status}` };
+    await setDoc(docRef, fields);
+    sentAnnouncementLocks.add(logId);
+    return { acquired: true };
   } catch (err: any) {
-    console.error('[Announcement Line Lock Exception]', logId, err?.message || String(err));
-    return { acquired: false, reason: 'lock_failed_network' };
+    console.warn('[Announcement Line Lock Exception]', logId, err?.message || String(err));
+    if (sentAnnouncementLocks.has(logId)) return { acquired: false, reason: 'already_sent_mem' };
+    sentAnnouncementLocks.add(logId);
+    return { acquired: true };
   }
 }
 
@@ -729,7 +694,7 @@ async function resolveLineUserIdFromTarget(targetUserId: string): Promise<{ line
   }
 
   try {
-    const allUsers = await fetchCollectionFromFirestoreRest('users');
+    const allUsers = await fetchCollectionFromFirestore('users');
     if (!allUsers || allUsers.length === 0) {
       return { lineUserId: null, userName: cleanTarget, error: 'ไม่พบข้อมูลผู้ใช้ในระบบ' };
     }
@@ -893,8 +858,7 @@ export async function handleLinePushNotification(req: any, res: any) {
   }
 }
 
-// Memory log fallback for sent reminders
-const sentRemindersLog = new Set<string>();
+
 
 function getDateNDaysAway(n: number): string {
   const date = new Date();
@@ -947,16 +911,16 @@ export async function handleLineTriggerScheduledReminders(req: any, res: any) {
     const in3DaysStr = getDateNDaysAway(3);
 
     const [allUsers, allShifts, allAnnouncements] = await Promise.all([
-      fetchCollectionFromFirestoreRest('users'),
-      fetchCollectionFromFirestoreRest('shifts'),
-      fetchCollectionFromFirestoreRest('announcements'),
+      fetchCollectionFromFirestore('users'),
+      fetchCollectionFromFirestore('shifts'),
+      fetchCollectionFromFirestore('announcements'),
     ]);
 
     const userMap = new Map<string, any>();
-    allUsers.forEach((u) => userMap.set(u.id, u));
+    allUsers.forEach((u: any) => userMap.set(u.id, u));
 
     const nowTs = Date.now();
-    const activeAnnouncements = allAnnouncements.filter((a) => {
+    const activeAnnouncements = allAnnouncements.filter((a: any) => {
       const startTs = a.startAt ? new Date(a.startAt).getTime() : 0;
       const endTs = a.endAt ? new Date(a.endAt).getTime() : Infinity;
       return nowTs >= startTs && nowTs <= endTs;
@@ -964,10 +928,10 @@ export async function handleLineTriggerScheduledReminders(req: any, res: any) {
 
     let announcementText = '';
     if (activeAnnouncements.length > 0) {
-      const sortedAnn = activeAnnouncements.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+      const sortedAnn = activeAnnouncements.sort((a: any, b: any) => (b.createdAt || '').localeCompare(a.createdAt || ''));
       const topAnn = sortedAnn.slice(0, 3);
       announcementText = topAnn
-        .map((a, idx) => `${idx + 1}. 📌 ${a.title || 'ประกาศ'}\n   ${a.content || ''}`)
+        .map((a: any, idx: number) => `${idx + 1}. 📌 ${a.title || 'ประกาศ'}\n   ${a.content || ''}`)
         .join('\n\n');
     } else {
       announcementText = '• ไม่มีประกาศใหม่ที่บังคับใช้ในวันนี้ สามารถเข้าดูปฏิทินในระบบได้ครับ';
@@ -998,7 +962,7 @@ export async function handleLineTriggerScheduledReminders(req: any, res: any) {
     }>>();
 
     for (const target of reminderTargets) {
-      const targetShifts = allShifts.filter((s) => s.date === target.dateStr);
+      const targetShifts = allShifts.filter((s: any) => s.date === target.dateStr);
 
       for (const shift of targetShifts) {
         const assignedUserIds = new Set<string>();
@@ -1123,7 +1087,12 @@ export async function handleLineTriggerScheduledReminders(req: any, res: any) {
 }
 
 // 6. Process Announcement Line Notifications (Publish + Scheduled Timing)
-export async function processAnnouncementLineNotifications(opts?: { onlyAnnouncementId?: string }): Promise<{
+export async function processAnnouncementLineNotifications(opts?: {
+  onlyAnnouncementId?: string;
+  announcement?: any;
+  recipientUserIds?: string[];
+  force?: boolean;
+}): Promise<{
   success: boolean;
   processed?: number;
   sent?: number;
@@ -1138,22 +1107,38 @@ export async function processAnnouncementLineNotifications(opts?: { onlyAnnounce
       return { success: false, reason: 'no_token' };
     }
 
-    let [announcements, users] = await Promise.all([
-      fetchCollectionFromFirestoreRest('announcements'),
-      fetchCollectionFromFirestoreRest('users'),
-    ]);
-
-    if (opts?.onlyAnnouncementId) {
-      announcements = announcements.filter((a) => a.id === opts.onlyAnnouncementId);
-      if (announcements.length === 0) {
-        return { success: true, processed: 0, sent: 0, skipped: 0, results: ['not_found'] };
+    let announcements: any[] = [];
+    if (opts?.announcement) {
+      announcements = [opts.announcement];
+    } else {
+      announcements = await fetchCollectionFromFirestore('announcements');
+      if (opts?.onlyAnnouncementId) {
+        announcements = announcements.filter((a) => a.id === opts.onlyAnnouncementId);
+        if (announcements.length === 0) {
+          return { success: true, processed: 0, sent: 0, skipped: 0, results: ['not_found'] };
+        }
       }
+    }
+
+    let recipientIds: string[] = [];
+    if (opts?.recipientUserIds && Array.isArray(opts.recipientUserIds) && opts.recipientUserIds.length > 0) {
+      const set = new Set<string>();
+      for (const uid of opts.recipientUserIds) {
+        if (typeof uid === 'string' && uid.startsWith('U') && uid.length >= 30) {
+          set.add(uid);
+        }
+      }
+      recipientIds = Array.from(set);
+    } else {
+      const users = await fetchCollectionFromFirestore('users');
+      recipientIds = getAnnouncementLineRecipients(users);
     }
 
     const now = Date.now();
 
     // Filter active announcements: not before startAt, not after endAt
     const activeAnnouncements = announcements.filter((ann) => {
+      if (opts?.force) return true; // Forced admin send always active
       const startTs = ann.startAt ? Date.parse(ann.startAt) : 0;
       const endTs = ann.endAt ? Date.parse(ann.endAt) : Infinity;
       return now >= startTs && now <= endTs;
@@ -1167,7 +1152,7 @@ export async function processAnnouncementLineNotifications(opts?: { onlyAnnounce
     }> = [];
 
     for (const ann of activeAnnouncements) {
-      if (ann.lineNotifyOnPublish === true) {
+      if (ann.lineNotifyOnPublish === true || opts?.force) {
         jobs.push({
           ann,
           logId: `${ann.id}__publish`,
@@ -1181,7 +1166,7 @@ export async function processAnnouncementLineNotifications(opts?: { onlyAnnounce
           const slotTs = Date.parse(slotAt.trim());
           const startTs = ann.startAt ? Date.parse(ann.startAt) : 0;
           const endTs = ann.endAt ? Date.parse(ann.endAt) : Infinity;
-          if (!isNaN(slotTs) && slotTs <= now && slotTs >= startTs && slotTs <= endTs) {
+          if (opts?.force || (!isNaN(slotTs) && slotTs <= now && slotTs >= startTs && slotTs <= endTs)) {
             jobs.push({
               ann,
               logId: `${ann.id}__sched__${slotTs}`,
@@ -1193,7 +1178,6 @@ export async function processAnnouncementLineNotifications(opts?: { onlyAnnounce
       }
     }
 
-    const recipientIds = getAnnouncementLineRecipients(users);
     let processed = 0;
     let sent = 0;
     let skipped = 0;
@@ -1216,15 +1200,17 @@ export async function processAnnouncementLineNotifications(opts?: { onlyAnnounce
         initialFields.slotAt = job.slotAt;
       }
 
-      const lock = await acquireAnnouncementLineLock(job.logId, initialFields);
-      if (!lock.acquired) {
-        skipped++;
-        results.push(`[Skip ${job.logId}]: ${lock.reason || 'lock_not_acquired'}`);
-        continue;
+      if (!opts?.force) {
+        const lock = await acquireAnnouncementLineLock(job.logId, initialFields);
+        if (!lock.acquired) {
+          skipped++;
+          results.push(`[Skip ${job.logId}]: ${lock.reason || 'lock_not_acquired'}`);
+          continue;
+        }
       }
 
       if (recipientIds.length === 0) {
-        await patchFirestoreDocRest('announcement_line_logs', job.logId, {
+        await patchFirestoreDoc('announcement_line_logs', job.logId, {
           status: 'sent',
           recipientCount: 0,
           successCount: 0,
@@ -1240,11 +1226,11 @@ export async function processAnnouncementLineNotifications(opts?: { onlyAnnounce
       const multiRes = await multicastLine(token, recipientIds, [message]);
 
       if (multiRes.successCount === 0 && recipientIds.length > 0) {
-        await deleteFirestoreDocRest('announcement_line_logs', job.logId);
+        await deleteFirestoreDoc('announcement_line_logs', job.logId);
         console.error('[Announcement Line Notification Failed]', job.logId, multiRes.errors);
         results.push(`[Failed ${job.logId}]: All ${recipientIds.length} failed, lock deleted`);
       } else {
-        await patchFirestoreDocRest('announcement_line_logs', job.logId, {
+        await patchFirestoreDoc('announcement_line_logs', job.logId, {
           status: 'sent',
           successCount: multiRes.successCount,
           failedCount: multiRes.failedCount,
@@ -1287,11 +1273,21 @@ export async function handleLineAnnouncementNotify(req: any, res: any) {
       return sendJson(res, 200, result);
     }
 
-    if (req.method === 'POST' && typeof req?.body?.announcementId === 'string' && req.body.announcementId.trim()) {
-      const result = await processAnnouncementLineNotifications({
-        onlyAnnouncementId: req.body.announcementId.trim(),
-      });
-      return sendJson(res, 200, result);
+    if (req.method === 'POST') {
+      const announcement = req.body?.announcement;
+      const announcementId = req.body?.announcementId || announcement?.id;
+      const recipientUserIds = req.body?.recipientUserIds;
+      const force = req.body?.force === true;
+
+      if (announcement || announcementId) {
+        const result = await processAnnouncementLineNotifications({
+          onlyAnnouncementId: announcementId,
+          announcement,
+          recipientUserIds,
+          force,
+        });
+        return sendJson(res, 200, result);
+      }
     }
 
     return sendJson(res, 200, { success: false, error: 'bad request' });
