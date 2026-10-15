@@ -355,11 +355,25 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Helper to send LINE Push Notification via Messaging API
   const sendLinePushNotification = async (targetUserId: string, messageText: string): Promise<boolean> => {
     if (!targetUserId) return false;
+
+    // Resolve targetUserId locally if nickname, name, or internal user ID was passed
+    const cleanTarget = targetUserId.trim().toLowerCase();
+    const matchedUser = users.find(
+      (u) =>
+        u.id === targetUserId ||
+        (u.lineUserId && u.lineUserId === targetUserId) ||
+        u.username.toLowerCase() === cleanTarget ||
+        u.name.toLowerCase() === cleanTarget ||
+        (u.nickname && u.nickname.toLowerCase() === cleanTarget)
+    );
+
+    const actualTarget = matchedUser?.lineUserId || matchedUser?.id || targetUserId;
+
     try {
       let res = await fetch(getApiUrl('/api/line/push-notification'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ targetUserId, messageText }),
+        body: JSON.stringify({ targetUserId: actualTarget, messageText }),
       });
       let data = await res.json().catch(() => null);
 
@@ -369,16 +383,16 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
         res = await fetch(fallbackUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ targetUserId, messageText }),
+          body: JSON.stringify({ targetUserId: actualTarget, messageText }),
         });
         data = await res.json().catch(() => null);
       }
 
       if (res.ok && data?.success) {
-        console.log(`[LINE Push Sent]: to ${targetUserId}`);
+        console.log(`[LINE Push Sent]: to ${actualTarget} (${data?.recipientName || ''})`);
         return true;
       } else if (data?.error) {
-        console.warn(`[LINE Push Failed]: to ${targetUserId}:`, data.error);
+        console.warn(`[LINE Push Failed]: to ${actualTarget}:`, data.error);
       }
       return false;
     } catch (err: any) {

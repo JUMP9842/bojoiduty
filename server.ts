@@ -885,6 +885,59 @@ app.post(['/api/line/webhook', '/line/webhook'], async (req, res) => {
   }
 });
 
+// Helper to resolve LINE User ID from username, nickname, app user ID, or raw LINE ID
+async function resolveLineUserIdFromTarget(targetUserId: string): Promise<{ lineUserId: string | null; userName: string; error?: string }> {
+  if (!targetUserId) return { lineUserId: null, userName: '', error: 'ไม่ได้ระบุผู้รับ' };
+
+  const cleanTarget = targetUserId.trim();
+  if (cleanTarget.startsWith('U') && cleanTarget.length >= 30) {
+    return { lineUserId: cleanTarget, userName: cleanTarget };
+  }
+
+  if (!serverDb) {
+    return { lineUserId: null, userName: cleanTarget, error: 'ระบบเชื่อมต่อฐานข้อมูล Firestore ไม่พร้อมใช้งาน' };
+  }
+
+  try {
+    const usersSnap = await getDocs(collection(serverDb, 'users'));
+    const allUsers = usersSnap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+
+    const queryClean = cleanTarget.toLowerCase();
+    const matchedUser = allUsers.find(
+      (u: any) =>
+        u.id === cleanTarget ||
+        (u.lineUserId && u.lineUserId === cleanTarget) ||
+        (u.username && u.username.toLowerCase() === queryClean) ||
+        (u.name && u.name.toLowerCase() === queryClean) ||
+        (u.nickname && u.nickname.toLowerCase() === queryClean) ||
+        (u.username && u.username.toLowerCase().includes(queryClean)) ||
+        (u.name && u.name.toLowerCase().includes(queryClean)) ||
+        (u.nickname && u.nickname.toLowerCase().includes(queryClean))
+    );
+
+    if (matchedUser) {
+      const uName = matchedUser.nickname || matchedUser.name || matchedUser.username || cleanTarget;
+      if (matchedUser.lineUserId) {
+        return { lineUserId: matchedUser.lineUserId, userName: uName };
+      } else {
+        return {
+          lineUserId: null,
+          userName: uName,
+          error: `ผู้ใช้ "${uName}" ในระบบยังไม่ได้เชื่อมต่อบัญชี LINE OA (ผู้ใช้ต้องล็อกอินผ่าน LINE หรือกดปุ่มผูกบัญชีในโปรไฟล์ก่อน)`,
+        };
+      }
+    }
+
+    return {
+      lineUserId: null,
+      userName: cleanTarget,
+      error: `ไม่พบบัญชีผู้ใช้ชื่อหรือรหัส "${cleanTarget}" ในระบบ`,
+    };
+  } catch (err: any) {
+    return { lineUserId: null, userName: cleanTarget, error: err.message };
+  }
+}
+
 // API: Send Push Notification via Messaging API
 app.post(['/api/line/push-notification', '/line/push-notification'], async (req, res) => {
   try {
@@ -907,8 +960,19 @@ app.post(['/api/line/push-notification', '/line/push-notification'], async (req,
     }
 
     if (!targetUserId) {
-      return res.status(200).json({ success: false, error: 'กรุณาระบุ LINE User ID ของผู้รับ' });
+      return res.status(200).json({ success: false, error: 'กรุณาระบุผู้รับการแจ้งเตือน (LINE User ID, ชื่อผู้ใช้ หรือชื่อเล่น)' });
     }
+
+    // Resolve targetUserId to actual LINE User ID if necessary
+    const resolved = await resolveLineUserIdFromTarget(targetUserId);
+    if (!resolved.lineUserId) {
+      return res.status(200).json({
+        success: false,
+        error: resolved.error || `ไม่สามารถระบุ LINE User ID ของผู้รับ "${targetUserId}" ได้`,
+      });
+    }
+
+    const recipientLineUserId = resolved.lineUserId;
 
     // Build LINE messages payload
     const messages = flexMessage
@@ -927,7 +991,7 @@ app.post(['/api/line/push-notification', '/line/push-notification'], async (req,
         Authorization: `Bearer ${lineConfig.lineAccessToken}`,
       },
       body: JSON.stringify({
-        to: targetUserId,
+        to: recipientLineUserId,
         messages,
       }),
     });
@@ -935,16 +999,22 @@ app.post(['/api/line/push-notification', '/line/push-notification'], async (req,
     if (!pushResponse.ok) {
       const errJson = await pushResponse.json().catch(() => ({}));
       console.warn('[LINE Push API Notice]:', errJson?.message || errJson);
+      const errMsg = errJson?.message || JSON.stringify(errJson);
+      let userFriendlyNotice = `LINE API Error (${pushResponse.status}): ${errMsg}`;
+      if (errMsg.includes('property') && errMsg.includes('to')) {
+        userFriendlyNotice += ' (ผู้รับยังไม่ได้กดแอดเพื่อน LINE OA @090puwgd หรือบล็อกบอทอยู่)';
+      }
       return res.status(200).json({
         success: false,
-        error: `LINE API Error (${pushResponse.status}): ` + (errJson.message || JSON.stringify(errJson)),
+        error: userFriendlyNotice,
       });
     }
 
     res.json({
       success: true,
-      message: 'ส่งการแจ้งเตือนเข้า LINE สำเร็จ!',
-      targetUserId,
+      message: `ส่งการแจ้งเตือนถึงคุณ ${resolved.userName} เข้า LINE สำเร็จ!`,
+      targetUserId: recipientLineUserId,
+      recipientName: resolved.userName,
     });
   } catch (err: any) {
     console.warn('[Push Notification Notice]:', err.message);
