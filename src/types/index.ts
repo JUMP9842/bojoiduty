@@ -60,6 +60,8 @@ export interface Announcement {
   authorAvatar?: string;
   createdAt: string;
   badge?: string;
+  startAt?: string; // ISO 8601 with Thailand offset, e.g. "2026-10-20T08:00:00+07:00"
+  endAt?: string;   // ISO 8601 with Thailand offset, e.g. "2026-10-25T18:00:00+07:00"
 }
 
 export interface ActivityLog {
@@ -74,6 +76,7 @@ export interface ActivityLog {
     | 'swap_accept'
     | 'swap_decline'
     | 'announcement_create'
+    | 'announcement_update'
     | 'announcement_delete'
     | 'bathing_update'
     | 'auto_distribute'

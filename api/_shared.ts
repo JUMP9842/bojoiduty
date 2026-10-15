@@ -738,15 +738,22 @@ export async function handleLineTriggerScheduledReminders(req: any, res: any) {
     const userMap = new Map<string, any>();
     allUsers.forEach((u) => userMap.set(u.id, u));
 
+    const nowTs = Date.now();
+    const activeAnnouncements = allAnnouncements.filter((a) => {
+      const startTs = a.startAt ? new Date(a.startAt).getTime() : 0;
+      const endTs = a.endAt ? new Date(a.endAt).getTime() : Infinity;
+      return nowTs >= startTs && nowTs <= endTs;
+    });
+
     let announcementText = '';
-    if (allAnnouncements.length > 0) {
-      const sortedAnn = allAnnouncements.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    if (activeAnnouncements.length > 0) {
+      const sortedAnn = activeAnnouncements.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
       const topAnn = sortedAnn.slice(0, 3);
       announcementText = topAnn
         .map((a, idx) => `${idx + 1}. 📌 ${a.title || 'ประกาศ'}\n   ${a.content || ''}`)
         .join('\n\n');
     } else {
-      announcementText = '• ไม่มีประกาศใหม่ในวันนี้ สามารถเข้าดูปฏิทินในระบบได้ครับ';
+      announcementText = '• ไม่มีประกาศใหม่ที่บังคับใช้ในวันนี้ สามารถเข้าดูปฏิทินในระบบได้ครับ';
     }
 
     const nowThai = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Bangkok' }));

@@ -141,7 +141,8 @@ interface DutyContextType {
   respondSwapRequest: (requestId: string, accept: boolean) => void;
   cancelSwapRequest: (requestId: string) => void;
   announcements: Announcement[];
-  addAnnouncement: (title: string, content: string, date: string, badge?: string) => void;
+  addAnnouncement: (title: string, content: string, date: string, badge?: string, startAt?: string, endAt?: string) => void;
+  updateAnnouncement: (announcement: Announcement) => void;
   deleteAnnouncement: (id: string) => void;
   activityLogs: ActivityLog[];
   clearActivityLogs: () => void;
@@ -1535,7 +1536,14 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
     deleteDoc(doc(db, 'swap_requests', requestId)).catch(console.warn);
   };
 
-  const addAnnouncement = async (title: string, content: string, date: string, badge?: string) => {
+  const addAnnouncement = async (
+    title: string,
+    content: string,
+    date: string,
+    badge?: string,
+    startAt?: string,
+    endAt?: string
+  ) => {
     const newAnn: Announcement = {
       id: 'ann-' + Date.now(),
       title,
@@ -1546,20 +1554,18 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
       authorAvatar: currentUser?.avatar,
       createdAt: new Date().toISOString(),
       badge: badge || '',
+      startAt: startAt || undefined,
+      endAt: endAt || undefined,
     };
     setAnnouncements((prev) => [newAnn, ...prev]);
     safeSetDoc(doc(db, 'announcements', newAnn.id), newAnn).catch(console.warn);
     addLog('announcement_create', `เพิ่มประกาศใหม่: "${title}"`);
+  };
 
-    // Broadcast announcement notification to all users with LINE account
-    users.forEach((u) => {
-      if (u.lineUserId) {
-        sendLinePushNotification(
-          u.lineUserId,
-          `📢 [ประกาศใหม่จาก BojoiDuty]\n📌 หัวข้อ: ${title}\n📝 รายละเอียด: ${content}\n📅 มีผลวันที่: ${date}`
-        );
-      }
-    });
+  const updateAnnouncement = async (updatedAnn: Announcement) => {
+    setAnnouncements((prev) => prev.map((a) => (a.id === updatedAnn.id ? updatedAnn : a)));
+    safeSetDoc(doc(db, 'announcements', updatedAnn.id), updatedAnn).catch(console.warn);
+    addLog('announcement_update', `ปรับปรุงประกาศ: "${updatedAnn.title}"`);
   };
 
   const deleteAnnouncement = async (id: string) => {
@@ -1842,6 +1848,7 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
         cancelSwapRequest,
         announcements,
         addAnnouncement,
+        updateAnnouncement,
         deleteAnnouncement,
         activityLogs,
         clearActivityLogs: () => setActivityLogs([]),
