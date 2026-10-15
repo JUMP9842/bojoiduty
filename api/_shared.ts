@@ -472,16 +472,29 @@ export async function handleLinePushNotification(req: any, res: any) {
       } catch {}
     }
 
-    const rawTo = (body.to || body.lineUserId || body.userId || body.targetUserId || '').trim();
-    const rawMessage = body.messages || body.message || body.messageText || body.text;
+    // Extract target user ID supporting both { to }, { userId }, { lineUserId }, { targetUserId }
+    const rawTo = (
+      body.to ||
+      body.userId ||
+      body.lineUserId ||
+      body.targetUserId ||
+      ''
+    ).trim();
+
+    // Extract message supporting both { messages }, { message }, { messageText }, { text }
+    const rawMessage = body.messages ?? body.message ?? body.messageText ?? body.text;
+
     const config = getLineConfig();
+
+    const envToken = (process.env.LINE_CHANNEL_ACCESS_TOKEN || '').trim();
+    const envViteToken = (process.env.VITE_LINE_CHANNEL_ACCESS_TOKEN || '').trim();
 
     const token = (
       body.token ||
       body.channelAccessToken ||
       body.lineAccessToken ||
-      process.env.LINE_CHANNEL_ACCESS_TOKEN ||
-      process.env.VITE_LINE_CHANNEL_ACCESS_TOKEN ||
+      envToken ||
+      envViteToken ||
       config.lineAccessToken ||
       DEFAULT_LINE_CONFIG.lineAccessToken ||
       ''
@@ -489,13 +502,13 @@ export async function handleLinePushNotification(req: any, res: any) {
 
     if (!token) {
       return sendJson(res, 400, {
-        error: 'ไม่พบ LINE Channel Access Token กรุณาใส่ Token ในหน้าตั้งค่า BackendModal หรือในไฟล์ .env',
+        error: 'ไม่พบ LINE Channel Access Token ในระบบ (.env หรือการตั้งค่า Backend)',
       });
     }
 
     if (!rawTo) {
       return sendJson(res, 400, {
-        error: 'ผู้ใช้คนนี้ยังไม่ได้ผูกบัญชี LINE OA (ไม่พบรหัส LINE User ID ที่ขึ้นต้นด้วย U)',
+        error: 'ไม่พบรหัส LINE User ID (to หรือ userId) ของผู้รับ',
       });
     }
 
@@ -513,13 +526,19 @@ export async function handleLinePushNotification(req: any, res: any) {
 
     if (!recipientLineUserId || !recipientLineUserId.startsWith('U')) {
       return sendJson(res, 400, {
-        error: 'ผู้ใช้คนนี้ยังไม่ได้ผูกบัญชี LINE OA (ไม่พบรหัส LINE User ID ที่ขึ้นต้นด้วย U)',
+        error: `ผู้ใช้ "${rawTo}" ยังไม่ได้ผูกบัญชี LINE OA (ไม่พบรหัส LINE User ID ที่ขึ้นต้นด้วย U)`,
       });
     }
 
-    const messages = Array.isArray(rawMessage)
-      ? rawMessage
-      : [{ type: 'text', text: String(rawMessage || '🐶 [BojoiDuty] คุณมีแจ้งเตือนเวรใหม่ที่ใกล้จะถึง') }];
+    let messages: any[];
+    if (Array.isArray(rawMessage)) {
+      messages = rawMessage;
+    } else if (typeof rawMessage === 'object' && rawMessage !== null && rawMessage.type) {
+      messages = [rawMessage];
+    } else {
+      const textVal = rawMessage !== undefined && rawMessage !== null ? String(rawMessage) : '🐶 [BojoiDuty] คุณมีแจ้งเตือนเวรใหม่';
+      messages = [{ type: 'text', text: textVal }];
+    }
 
     console.log(`[LINE Push Direct Dispatch] Target: ${recipientLineUserId}`);
 
@@ -546,7 +565,7 @@ export async function handleLinePushNotification(req: any, res: any) {
     if (!pushResponse.ok) {
       const lineError = resData.message || resData.error || resText || `LINE API ตอบกลับสถานะ ${pushResponse.status}`;
       return sendJson(res, pushResponse.status || 400, {
-        error: lineError,
+        error: `เกิดข้อผิดพลาดจาก LINE Messaging API (${pushResponse.status}): ${lineError}`,
         details: resData,
       });
     }
