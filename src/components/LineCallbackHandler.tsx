@@ -129,7 +129,12 @@ export const LineCallbackHandler: React.FC = () => {
     let redirectUri = getActiveLineCallbackUrl();
     if (state) {
       try {
-        const decoded = decodeURIComponent(state);
+        let decoded = decodeURIComponent(state);
+        if (!decoded.startsWith('{') && !decoded.startsWith('http')) {
+          try {
+            decoded = decodeURIComponent(escape(atob(state.replace(/-/g, '+').replace(/_/g, '/'))));
+          } catch {}
+        }
         if (decoded.startsWith('{')) {
           const parsed = JSON.parse(decoded);
           if (parsed.redirectUri) {

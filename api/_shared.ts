@@ -17,10 +17,7 @@ export function getLineConfig() {
     lineChannelSecret: process.env.LINE_CHANNEL_SECRET || runtimeLineConfig.lineChannelSecret,
     lineAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN || runtimeLineConfig.lineAccessToken,
     liffId: process.env.VITE_LINE_LIFF_ID || runtimeLineConfig.liffId,
-    publicSiteUrl:
-      process.env.PUBLIC_SITE_URL ||
-      (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '') ||
-      runtimeLineConfig.publicSiteUrl,
+    publicSiteUrl: process.env.PUBLIC_SITE_URL || runtimeLineConfig.publicSiteUrl || 'https://bojoiduty.vercel.app',
   };
 }
 
@@ -77,7 +74,12 @@ export async function handleLineOAuthCallback(req: any, res: any) {
 
     if (state) {
       try {
-        const decodedState = decodeURIComponent(state);
+        let decodedState = decodeURIComponent(state);
+        if (!decodedState.startsWith('{') && !decodedState.startsWith('http')) {
+          try {
+            decodedState = Buffer.from(state, 'base64url').toString('utf8');
+          } catch {}
+        }
         if (decodedState.startsWith('{')) {
           const parsed = JSON.parse(decodedState);
           if (parsed.origin) clientOrigin = parsed.origin;
@@ -274,20 +276,9 @@ export function handleLineLoginUrl(req: any, res: any) {
     let clientOrigin = (query.client_origin as string) || (req.headers?.origin as string) || serverOrigin;
     clientOrigin = clientOrigin.replace(/\/$/, '');
 
-    let callbackBaseOrigin = clientOrigin;
-    if (config.publicSiteUrl) {
-      callbackBaseOrigin = config.publicSiteUrl;
-    } else if (
-      clientOrigin.includes('localhost') ||
-      clientOrigin.includes('ais-dev-') ||
-      clientOrigin.includes('ais-pre-')
-    ) {
-      callbackBaseOrigin = clientOrigin.includes('ais-dev-') ? clientOrigin : 'https://bojoiduty.vercel.app';
-    } else {
-      callbackBaseOrigin = clientOrigin;
-    }
-
-    const redirectUri = (query.redirect_uri as string) || `${callbackBaseOrigin}/api/auth/line/callback`;
+    // Canonical Callback URL registered in LINE Developers Console
+    const callbackBaseOrigin = (config.publicSiteUrl || 'https://bojoiduty.vercel.app').replace(/\/$/, '');
+    const redirectUri = `${callbackBaseOrigin}/api/auth/line/callback`;
 
     if (!config.lineChannelId) {
       return sendJson(res, 400, {
@@ -300,7 +291,7 @@ export function handleLineLoginUrl(req: any, res: any) {
       redirectUri: redirectUri,
       t: Date.now(),
     };
-    const state = encodeURIComponent(JSON.stringify(stateObj));
+    const state = Buffer.from(JSON.stringify(stateObj)).toString('base64url');
 
     const params = new URLSearchParams({
       response_type: 'code',

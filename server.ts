@@ -93,7 +93,7 @@ let lineConfig = {
   lineChannelSecret: process.env.LINE_CHANNEL_SECRET || DEFAULT_LINE_CONFIG.lineChannelSecret,
   lineAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN || DEFAULT_LINE_CONFIG.lineAccessToken,
   liffId: process.env.VITE_LINE_LIFF_ID || DEFAULT_LINE_CONFIG.liffId,
-  publicSiteUrl: process.env.PUBLIC_SITE_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : '') || DEFAULT_LINE_CONFIG.publicSiteUrl,
+  publicSiteUrl: process.env.PUBLIC_SITE_URL || DEFAULT_LINE_CONFIG.publicSiteUrl || 'https://bojoiduty.vercel.app',
 };
 
 // Automatic Webhook URL Sync Function (PUT https://api.line.me/v2/bot/channel/webhook/endpoint)
@@ -212,21 +212,9 @@ app.get(['/api/line/login-url', '/line/login-url'], (req, res) => {
   let clientOrigin = (req.query.client_origin as string) || (req.get('origin') as string) || serverOrigin;
   clientOrigin = clientOrigin.replace(/\/$/, '');
 
-  // Determine callback base URL:
-  // 1. If explicit publicSiteUrl configured, prefer that for public sites
-  // 2. If client is on Vercel or non-dev domain, use clientOrigin
-  // 3. Otherwise fall back to DEV_SERVER_URL
-  let callbackBaseOrigin = clientOrigin;
-  if (lineConfig.publicSiteUrl) {
-    callbackBaseOrigin = lineConfig.publicSiteUrl;
-  } else if (clientOrigin.includes('localhost') || clientOrigin.includes('ais-dev-') || clientOrigin.includes('ais-pre-')) {
-    callbackBaseOrigin = clientOrigin.includes('ais-dev-') ? clientOrigin : DEV_SERVER_URL;
-  } else {
-    callbackBaseOrigin = clientOrigin;
-  }
-
-  // Allow override via query param if provided
-  const redirectUri = (req.query.redirect_uri as string) || `${callbackBaseOrigin}/api/auth/line/callback`;
+  // Canonical Callback URL registered in LINE Developers Console
+  const callbackBaseOrigin = (lineConfig.publicSiteUrl || 'https://bojoiduty.vercel.app').replace(/\/$/, '');
+  const redirectUri = `${callbackBaseOrigin}/api/auth/line/callback`;
 
   if (!lineConfig.lineChannelId) {
     return res.status(400).json({
@@ -240,7 +228,7 @@ app.get(['/api/line/login-url', '/line/login-url'], (req, res) => {
     redirectUri: redirectUri,
     t: Date.now(),
   };
-  const state = encodeURIComponent(JSON.stringify(stateObj));
+  const state = Buffer.from(JSON.stringify(stateObj)).toString('base64url');
 
   const params = new URLSearchParams({
     response_type: 'code',
@@ -274,7 +262,12 @@ async function handleLineOAuthCallback(req: express.Request, res: express.Respon
 
     if (state) {
       try {
-        const decodedState = decodeURIComponent(state);
+        let decodedState = decodeURIComponent(state);
+        if (!decodedState.startsWith('{') && !decodedState.startsWith('http')) {
+          try {
+            decodedState = Buffer.from(state, 'base64url').toString('utf8');
+          } catch {}
+        }
         if (decodedState.startsWith('{')) {
           const parsed = JSON.parse(decodedState);
           if (parsed.origin) clientOrigin = parsed.origin;

@@ -6,25 +6,17 @@ import { getApiUrl, safeFetchJson } from './apiUtils';
  * or local/preview development containers.
  */
 export const getActiveLineCallbackUrl = (customOrigin?: string): string => {
-  if (customOrigin) {
+  if (customOrigin && !customOrigin.includes('ais-') && !customOrigin.includes('localhost')) {
     return `${customOrigin.replace(/\/$/, '')}/api/auth/line/callback`;
   }
-  if (typeof window !== 'undefined' && window.location.origin) {
-    const origin = window.location.origin;
-    // If running in Google AI Studio static preview, map to the backend dev container
-    if (origin.includes('ais-pre-')) {
-      return origin.replace('ais-pre-', 'ais-dev-') + '/api/auth/line/callback';
-    }
-    // On Vercel, production, or custom domain, use the active domain!
-    return `${origin}/api/auth/line/callback`;
-  }
-  return 'https://ais-dev-olsgx3yczrx7ghc5qkwxao-603131036827.asia-southeast1.run.app/api/auth/line/callback';
+  // Canonical callback URL registered in LINE Developers Console
+  return 'https://bojoiduty.vercel.app/api/auth/line/callback';
 };
 
 /**
- * Triggers LINE OAuth Login using window.open(authUrl, '_blank')
- * to avoid X-Frame-Options restrictions when running inside an iframe.
- * Uses dynamic client origin so Vercel public sites redirect back to Vercel, not the dev site.
+ * Triggers LINE OAuth Login using window.open(authUrl, '_blank') on desktop,
+ * and direct window.location.href on mobile to allow native LINE App auto-login
+ * and prevent popup blockers.
  */
 export const loginWithLinePopup = async (_arg1?: any, _arg2?: any) => {
   try {
@@ -44,7 +36,15 @@ export const loginWithLinePopup = async (_arg1?: any, _arg2?: any) => {
         redirectUri,
         t: Date.now(),
       };
-      const state = encodeURIComponent(JSON.stringify(stateObj));
+      let state = '';
+      try {
+        state = btoa(unescape(encodeURIComponent(JSON.stringify(stateObj))))
+          .replace(/\+/g, '-')
+          .replace(/\//g, '_')
+          .replace(/=+$/, '');
+      } catch {
+        state = encodeURIComponent(JSON.stringify(stateObj));
+      }
 
       const params = new URLSearchParams({
         response_type: 'code',
@@ -57,8 +57,15 @@ export const loginWithLinePopup = async (_arg1?: any, _arg2?: any) => {
     }
 
     if (loginUrl) {
-      // Open in a new window/tab to prevent X-Frame-Options iframe errors
-      window.open(loginUrl, '_blank');
+      const isMobile = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      if (isMobile) {
+        window.location.href = loginUrl;
+      } else {
+        const popup = window.open(loginUrl, '_blank', 'width=500,height=650');
+        if (!popup || popup.closed || typeof popup.closed === 'undefined') {
+          window.location.href = loginUrl;
+        }
+      }
     } else {
       throw new Error('ไม่สามารถรับ URL สำหรับเข้าสู่ระบบ LINE ได้');
     }
