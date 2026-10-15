@@ -16,9 +16,8 @@ export const getActiveLineCallbackUrl = (_customOrigin?: string): string => {
 };
 
 /**
- * Triggers LINE OAuth Login using window.open(authUrl, '_blank') on desktop,
- * and direct window.location.href on mobile to allow native LINE App auto-login
- * and prevent popup blockers.
+ * Triggers LINE OAuth Login using full page redirect (window.location.href)
+ * for all devices to prevent popup blockers and lost window.opener context.
  */
 export const loginWithLinePopup = async (_arg1?: any, _arg2?: any) => {
   try {
@@ -60,18 +59,11 @@ export const loginWithLinePopup = async (_arg1?: any, _arg2?: any) => {
     }
 
     if (loginUrl) {
-      const isMobile = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-      if (isMobile) {
-        window.location.href = loginUrl;
-      } else {
-        const popup = window.open(loginUrl, '_blank', 'width=500,height=650');
-        if (!popup || popup.closed || typeof popup.closed === 'undefined') {
-          window.location.href = loginUrl;
-        }
-      }
+      // Direct full-page redirect for all devices (prevents lost window.opener and popup blocking)
+      window.location.href = loginUrl;
     }
   } catch (err: any) {
-    console.error('Failed to trigger LINE login popup:', err);
+    console.error('Failed to trigger LINE login redirect:', err);
   }
 };
 
