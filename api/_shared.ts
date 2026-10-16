@@ -1247,7 +1247,8 @@ export async function processAnnouncementLineNotifications(opts?: {
               slotTs <= now + 120000 &&
               now - slotTs <= 60 * 60 * 1000 &&
               slotTs <= endTs &&
-              slotTs >= startTs)
+              slotTs >= startTs &&
+              slotTs >= (Date.parse(ann.createdAt || '') || 0))
           ) {
             jobs.push({
               ann,
@@ -1324,6 +1325,18 @@ export async function processAnnouncementLineNotifications(opts?: {
           failedCount: 0,
           sentAt: new Date().toISOString(),
         });
+        if (opts?.force && job.kind === 'publish') {
+          sentAnnouncementLocks.add(`${job.ann.id}__publish`);
+          await patchFirestoreDoc('announcement_line_logs', `${job.ann.id}__publish`, {
+            announcementId: job.ann.id,
+            kind: 'publish',
+            status: 'sent',
+            recipientCount: recipientIds.length,
+            successCount,
+            failedCount: 0,
+            sentAt: new Date().toISOString(),
+          });
+        }
         sent++;
         results.push(`[Sent ${job.logId}]: Success (${successCount} recipients)`);
       }
