@@ -10,6 +10,7 @@ jobs:
   ping-cron:
     runs-on: ubuntu-latest
     steps:
-      - name: Call Vercel Announcement Notify API
+      - name: Call App Announcement Notify API
         run: |
-          curl -s "https://bojoiduty.vercel.app/api/line/announcement-notify?cron=true"
+          curl -s "https://ais-dev-olsgx3yczrx7ghc5qkwxao-603131036827.asia-southeast1.run.app/api/line/announcement-notify?cron=true"
+          curl -s "https://bojoiduty.vercel.app/api/line/announcement-notify?cron=true" || true
