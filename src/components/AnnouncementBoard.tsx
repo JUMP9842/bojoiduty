@@ -457,14 +457,6 @@ export const AnnouncementBoard: React.FC = () => {
         .filter((u) => u.lineUserId && u.lineUserId.startsWith('U') && u.lineNotificationEnabled !== false)
         .map((u) => u.lineUserId as string);
 
-      if (recipientUserIds.length === 0) {
-        setFeedback({
-          type: 'info',
-          text: '⚠️ ยังไม่มีสมาชิกที่เชื่อมต่อบัญชี LINE OA ในระบบ',
-        });
-        return;
-      }
-
       const res = await safeFetchJson(getApiUrl('/api/line/announcement-notify'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

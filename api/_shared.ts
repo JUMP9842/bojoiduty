@@ -1189,7 +1189,16 @@ export async function processAnnouncementLineNotifications(opts?: {
     }> = [];
 
     for (const ann of activeAnnouncements) {
-      if (ann.lineNotifyOnPublish === true || opts?.force) {
+      if (opts?.force) {
+        jobs.push({
+          ann,
+          logId: `${ann.id}__force__${now}`,
+          kind: 'publish',
+        });
+        continue;
+      }
+
+      if (ann.lineNotifyOnPublish === true) {
         jobs.push({
           ann,
           logId: `${ann.id}__publish`,
