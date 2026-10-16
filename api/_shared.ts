@@ -659,6 +659,42 @@ export async function multicastLine(
   return { successCount, failedCount, errors };
 }
 
+// Broadcast message to all LINE Official Account followers
+export async function broadcastLine(
+  token: string,
+  messages: any[]
+): Promise<{ success: boolean; error?: any }> {
+  try {
+    const res = await fetch('https://api.line.me/v2/bot/message/broadcast', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        messages,
+      }),
+    });
+    const resText = await res.text().catch(() => '');
+    let resData: any = {};
+    try {
+      resData = resText ? JSON.parse(resText) : {};
+    } catch {
+      resData = { message: resText };
+    }
+    if (res.ok) {
+      return { success: true };
+    } else {
+      console.warn('[LINE Broadcast API Error]:', res.status, resData);
+      return { success: false, error: resData };
+    }
+  } catch (err: any) {
+    console.error('[LINE Broadcast API Exception]:', err);
+    return { success: false, error: err?.message };
+  }
+}
+
+
 export function getLineQuickReplyItems() {
   return {
     items: [
@@ -1246,35 +1282,35 @@ export async function processAnnouncementLineNotifications(opts?: {
         }
       }
 
-      if (recipientIds.length === 0) {
-        await patchFirestoreDoc('announcement_line_logs', job.logId, {
-          status: 'sent',
-          recipientCount: 0,
-          successCount: 0,
-          failedCount: 0,
-          sentAt: new Date().toISOString(),
-        });
-        results.push(`[Sent ${job.logId}]: 0 recipients`);
-        sent++;
-        continue;
+      const message = buildAnnouncementLineMessage(job.ann, job.kind, config);
+      
+      // Always broadcast to all LINE Official Account followers
+      const broadcastRes = await broadcastLine(token, [message]);
+      
+      let successCount = broadcastRes.success ? (recipientIds.length > 0 ? recipientIds.length : 1) : 0;
+      let failedCount = broadcastRes.success ? 0 : 1;
+
+      // Also multicast if recipientIds exist
+      if (recipientIds.length > 0) {
+        const multiRes = await multicastLine(token, recipientIds, [message]);
+        if (multiRes.successCount > 0) {
+          successCount = Math.max(successCount, multiRes.successCount);
+        }
       }
 
-      const message = buildAnnouncementLineMessage(job.ann, job.kind, config);
-      const multiRes = await multicastLine(token, recipientIds, [message]);
-
-      if (multiRes.successCount === 0 && recipientIds.length > 0) {
+      if (!broadcastRes.success && (recipientIds.length === 0 || successCount === 0)) {
         await deleteFirestoreDoc('announcement_line_logs', job.logId);
-        console.error('[Announcement Line Notification Failed]', job.logId, multiRes.errors);
-        results.push(`[Failed ${job.logId}]: All ${recipientIds.length} failed, lock deleted`);
+        console.error('[Announcement Line Notification Failed]', job.logId, broadcastRes.error);
+        results.push(`[Failed ${job.logId}]: LINE Broadcast failed, lock deleted`);
       } else {
         await patchFirestoreDoc('announcement_line_logs', job.logId, {
           status: 'sent',
-          successCount: multiRes.successCount,
-          failedCount: multiRes.failedCount,
+          successCount,
+          failedCount: 0,
           sentAt: new Date().toISOString(),
         });
         sent++;
-        results.push(`[Sent ${job.logId}]: ${multiRes.successCount}/${recipientIds.length}`);
+        results.push(`[Sent ${job.logId}]: Broadcast & Multicast success (${successCount} recipients)`);
       }
     }
 
