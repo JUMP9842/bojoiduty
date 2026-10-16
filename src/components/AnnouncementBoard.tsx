@@ -331,6 +331,12 @@ export const AnnouncementBoard: React.FC = () => {
       return;
     }
 
+    if (enableDailyNotify && (!endAtInput || !endAtInput.trim())) {
+      setFormError('กรุณากำหนดเวลาสิ้นสุด (End At) เมื่อเปิดแจ้งเตือนซ้ำทุกวัน');
+      setIsSubmitting(false);
+      return;
+    }
+
     const finalStartIso = formatInputToThaiIso(startAtInput);
     const finalEndIso = formatInputToThaiIso(endAtInput);
 

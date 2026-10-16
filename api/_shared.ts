@@ -1241,7 +1241,14 @@ export async function processAnnouncementLineNotifications(opts?: {
           const startTs = ann.startAt ? Date.parse(ann.startAt) : 0;
           const endTs = ann.endAt ? Date.parse(ann.endAt) : Infinity;
 
-          if (opts?.force || (!isNaN(slotTs) && slotTs <= (now + 120000) && slotTs <= endTs && slotTs >= (startTs - 86400000))) {
+          if (
+            opts?.force ||
+            (!isNaN(slotTs) &&
+              slotTs <= now + 120000 &&
+              now - slotTs <= 60 * 60 * 1000 &&
+              slotTs <= endTs &&
+              slotTs >= startTs)
+          ) {
             jobs.push({
               ann,
               logId: `${ann.id}__daily__${dateStr}`,
