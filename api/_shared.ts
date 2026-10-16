@@ -1293,24 +1293,23 @@ export async function processAnnouncementLineNotifications(opts?: {
 
       const message = buildAnnouncementLineMessage(job.ann, job.kind, config);
       
-      // Always broadcast to all LINE Official Account followers
-      const broadcastRes = await broadcastLine(token, [message]);
-      
-      let successCount = broadcastRes.success ? (recipientIds.length > 0 ? recipientIds.length : 1) : 0;
-      let failedCount = broadcastRes.success ? 0 : 1;
+      let sendSuccess = false;
+      let successCount = 0;
 
-      // Also multicast if recipientIds exist
       if (recipientIds.length > 0) {
         const multiRes = await multicastLine(token, recipientIds, [message]);
-        if (multiRes.successCount > 0) {
-          successCount = Math.max(successCount, multiRes.successCount);
-        }
+        successCount = multiRes.successCount;
+        sendSuccess = successCount > 0;
+      } else {
+        const broadcastRes = await broadcastLine(token, [message]);
+        sendSuccess = broadcastRes.success;
+        successCount = sendSuccess ? 1 : 0;
       }
 
-      if (!broadcastRes.success && (recipientIds.length === 0 || successCount === 0)) {
+      if (!sendSuccess) {
         await deleteFirestoreDoc('announcement_line_logs', job.logId);
-        console.error('[Announcement Line Notification Failed]', job.logId, broadcastRes.error);
-        results.push(`[Failed ${job.logId}]: LINE Broadcast failed, lock deleted`);
+        console.error('[Announcement Line Notification Failed]', job.logId);
+        results.push(`[Failed ${job.logId}]: LINE send failed, lock deleted`);
       } else {
         await patchFirestoreDoc('announcement_line_logs', job.logId, {
           status: 'sent',
@@ -1319,7 +1318,7 @@ export async function processAnnouncementLineNotifications(opts?: {
           sentAt: new Date().toISOString(),
         });
         sent++;
-        results.push(`[Sent ${job.logId}]: Broadcast & Multicast success (${successCount} recipients)`);
+        results.push(`[Sent ${job.logId}]: Success (${successCount} recipients)`);
       }
     }
 
