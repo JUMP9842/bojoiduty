@@ -1212,8 +1212,8 @@ export async function processAnnouncementLineNotifications(opts?: {
           const slotTs = Date.parse(slotAt.trim());
           const startTs = ann.startAt ? Date.parse(ann.startAt) : 0;
           const endTs = ann.endAt ? Date.parse(ann.endAt) : Infinity;
-          // Slot is due if slotTs <= now + 2 mins (clock skew) and within start/end window
-          if (opts?.force || (!isNaN(slotTs) && slotTs <= (now + 120000) && (slotTs + 120000) >= startTs && slotTs <= endTs)) {
+          // Slot is due if slotTs <= now + 2 mins and within date window
+          if (opts?.force || (!isNaN(slotTs) && slotTs <= (now + 120000) && slotTs <= endTs && slotTs >= (startTs - 86400000))) {
             jobs.push({
               ann,
               logId: `${ann.id}__sched__${slotTs}`,
@@ -1241,7 +1241,7 @@ export async function processAnnouncementLineNotifications(opts?: {
           const startTs = ann.startAt ? Date.parse(ann.startAt) : 0;
           const endTs = ann.endAt ? Date.parse(ann.endAt) : Infinity;
 
-          if (opts?.force || (!isNaN(slotTs) && slotTs <= (now + 120000) && (slotTs + 120000) >= startTs && slotTs <= endTs)) {
+          if (opts?.force || (!isNaN(slotTs) && slotTs <= (now + 120000) && slotTs <= endTs && slotTs >= (startTs - 86400000))) {
             jobs.push({
               ann,
               logId: `${ann.id}__daily__${dateStr}`,
