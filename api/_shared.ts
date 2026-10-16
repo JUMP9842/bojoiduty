@@ -1178,14 +1178,49 @@ export async function processAnnouncementLineNotifications(opts?: {
           }
         }
       }
+
+      // Daily recurring notification check (e.g. at 08:00 every day until endAt)
+      if (ann.dailyNotifyTime && typeof ann.dailyNotifyTime === 'string' && ann.dailyNotifyTime.trim()) {
+        const timePart = ann.dailyNotifyTime.trim(); // e.g. "08:00"
+        const nowLocalDate = new Date(now + 7 * 3600 * 1000); // Thailand UTC+7
+        const offsets = [0, -1]; // check today and yesterday as catch-up
+        for (const dayOffset of offsets) {
+          const d = new Date(nowLocalDate.getTime() + dayOffset * 86400 * 1000);
+          const yyyy = d.getUTCFullYear();
+          const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+          const dd = String(d.getUTCDate()).padStart(2, '0');
+          const dateStr = `${yyyy}-${mm}-${dd}`;
+
+          const slotIso = `${dateStr}T${timePart}:00+07:00`;
+          const slotTs = Date.parse(slotIso);
+          const startTs = ann.startAt ? Date.parse(ann.startAt) : 0;
+          const endTs = ann.endAt ? Date.parse(ann.endAt) : Infinity;
+
+          if (opts?.force || (!isNaN(slotTs) && slotTs <= (now + 120000) && (slotTs + 120000) >= startTs && slotTs <= endTs)) {
+            jobs.push({
+              ann,
+              logId: `${ann.id}__daily__${dateStr}`,
+              kind: 'scheduled',
+              slotAt: slotIso,
+            });
+          }
+        }
+      }
     }
+
+    // Deduplicate jobs by logId
+    const uniqueJobsMap = new Map<string, typeof jobs[0]>();
+    for (const j of jobs) {
+      uniqueJobsMap.set(j.logId, j);
+    }
+    const finalJobs = Array.from(uniqueJobsMap.values());
 
     let processed = 0;
     let sent = 0;
     let skipped = 0;
     const results: string[] = [];
 
-    for (const job of jobs) {
+    for (const job of finalJobs) {
       processed++;
       const nowIso = new Date().toISOString();
 

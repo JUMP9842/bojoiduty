@@ -64,6 +64,7 @@ export interface Announcement {
   endAt?: string;   // ISO 8601 with Thailand offset, e.g. "2026-10-25T18:00:00+07:00"
   lineNotifyOnPublish?: boolean;
   lineNotifyScheduledAt?: string[]; // ISO 8601 offset +07:00
+  dailyNotifyTime?: string; // e.g. "08:00" for daily recurring notification
 }
 
 export interface AnnouncementLineLog {

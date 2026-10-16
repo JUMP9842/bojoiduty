@@ -149,7 +149,8 @@ interface DutyContextType {
     startAt?: string,
     endAt?: string,
     lineNotifyOnPublish?: boolean,
-    lineNotifyScheduledAt?: string[]
+    lineNotifyScheduledAt?: string[],
+    dailyNotifyTime?: string
   ) => Promise<Announcement>;
   updateAnnouncement: (announcement: Announcement) => Promise<Announcement>;
   deleteAnnouncement: (id: string) => void;
@@ -1553,7 +1554,8 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
     startAt?: string,
     endAt?: string,
     lineNotifyOnPublish?: boolean,
-    lineNotifyScheduledAt?: string[]
+    lineNotifyScheduledAt?: string[],
+    dailyNotifyTime?: string
   ): Promise<Announcement> => {
     const newAnn: Announcement = {
       id: 'ann-' + Date.now(),
@@ -1569,6 +1571,7 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
       endAt: endAt || undefined,
       lineNotifyOnPublish: lineNotifyOnPublish ?? true,
       lineNotifyScheduledAt: lineNotifyScheduledAt || [],
+      dailyNotifyTime: dailyNotifyTime || undefined,
     };
     setAnnouncements((prev) => [newAnn, ...prev]);
     await safeSetDoc(doc(db, 'announcements', newAnn.id), newAnn).catch(console.warn);
