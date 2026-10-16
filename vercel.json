@@ -1,16 +1,8 @@
 {
   "crons": [
     {
-      "path": "/api/line/trigger-scheduled-reminders",
-      "schedule": "0 1 * * *"
-    },
-    {
-      "path": "/api/line/trigger-scheduled-reminders",
-      "schedule": "0 11 * * *"
-    },
-    {
       "path": "/api/line/announcement-notify",
-      "schedule": "*/10 * * * *"
+      "schedule": "0 0 * * *"
     }
   ],
   "rewrites": [

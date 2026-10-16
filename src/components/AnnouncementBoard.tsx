@@ -84,6 +84,29 @@ export const AnnouncementBoard: React.FC = () => {
     }
   }, [feedback]);
 
+  // Heartbeat check for scheduled and daily notifications when app/board mounts or runs (for Vercel serverless reliability)
+  useEffect(() => {
+    const triggerNotificationsCheck = async () => {
+      try {
+        await safeFetchJson(getApiUrl('/api/line/announcement-notify'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ triggerAll: true }),
+        });
+      } catch (err) {
+        console.warn('Background notification check error:', err);
+      }
+    };
+
+    const initTimer = setTimeout(triggerNotificationsCheck, 2000);
+    const interval = setInterval(triggerNotificationsCheck, 180000);
+
+    return () => {
+      clearTimeout(initTimer);
+      clearInterval(interval);
+    };
+  }, []);
+
   const isAdmin = currentUser?.role === 'admin';
 
   // Helper to determine status: 'upcoming' | 'active' | 'expired'
