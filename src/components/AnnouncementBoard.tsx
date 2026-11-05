@@ -1505,15 +1505,6 @@ export const AnnouncementBoard: React.FC = () => {
                           <span>ส่ง LINE ตอนนี้</span>
                         </button>
 
-                        {/* Dedicated Button requested by user: เลือกเวลาประกาศ */}
-                        <button
-                          onClick={() => handleOpenTimingModal(item)}
-                          title="เลือกเวลาประกาศ (แจ้งเตือนลง LINE เมื่อถึงเวลาและยังอยู่ในช่วงประกาศ)"
-                          className="px-2 py-1 rounded-lg bg-emerald-100 hover:bg-emerald-200 text-emerald-950 text-[10px] font-extrabold border border-emerald-400 flex items-center gap-1 transition-colors cursor-pointer"
-                        >
-                          <Clock className="w-3 h-3 text-emerald-700" />
-                          <span>เลือกเวลาประกาศ</span>
-                        </button>
 
                         <button
                           onClick={() => handleOpenEditForm(item)}
@@ -1567,12 +1558,7 @@ export const AnnouncementBoard: React.FC = () => {
                           <Bell className="w-3 h-3 text-emerald-600" />
                           <span>กำหนดเวลาเตือน LINE ({schedCount} ครั้ง):</span>
                         </div>
-                        <button
-                          onClick={() => handleOpenTimingModal(item)}
-                          className="text-[9px] text-[#06C755] hover:underline font-extrabold cursor-pointer"
-                        >
-                          + เพิ่ม/จัดการเวลา
-                        </button>
+
                       </div>
                       <div className="flex flex-wrap gap-1">
                         {item.lineNotifyScheduledAt!.map((s, idx) => (

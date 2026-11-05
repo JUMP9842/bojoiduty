@@ -51,6 +51,7 @@ export const CalendarView: React.FC<CalendarViewProps> = () => {
     calendarTasks,
     addCalendarTaskNote,
     deleteCalendarTaskNote,
+    getQuotaStats,
     quotaStats,
     currentUserRemainingQuota,
   } = useDuty();
@@ -71,6 +72,10 @@ export const CalendarView: React.FC<CalendarViewProps> = () => {
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth();
+
+  const currentQuotaStats = useMemo(() => {
+    return getQuotaStats(year, month);
+  }, [getQuotaStats, year, month]);
 
   // Month navigation
   const prevMonth = () => setCurrentDate(new Date(year, month - 1, 1));
@@ -217,8 +222,8 @@ export const CalendarView: React.FC<CalendarViewProps> = () => {
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
             {users.map((u) => {
-              const count = quotaStats.userCounts[u.id] || { daily: 0, bathing: 0, total: 0 };
-              const progress = Math.min(100, Math.round((count.daily / Math.max(1, quotaStats.targetPerMember)) * 100));
+              const count = currentQuotaStats.userCounts[u.id] || { daily: 0, bathing: 0, total: 0 };
+              const progress = Math.min(100, Math.round((count.daily / Math.max(1, currentQuotaStats.targetPerMember)) * 100));
               const isMe = Boolean(currentUser && u.id === currentUser.id);
 
               return (
@@ -250,7 +255,7 @@ export const CalendarView: React.FC<CalendarViewProps> = () => {
 
                   <div className="flex items-baseline justify-between text-xs mb-1">
                     <span className={isMe ? 'text-neutral-900 font-semibold' : 'text-neutral-500'}>
-                      {count.daily} / {quotaStats.targetPerMember} Days
+                      {count.daily} / {currentQuotaStats.targetPerMember} Days
                     </span>
                     <span className="font-bold">{progress}%</span>
                   </div>

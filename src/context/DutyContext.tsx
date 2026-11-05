@@ -193,6 +193,11 @@ interface DutyContextType {
     targetPerMember: number;
     userCounts: Record<string, { daily: number; bathing: number; total: number }>;
   };
+  getQuotaStats: (year?: number, month?: number) => {
+    totalDaysInMonth: number;
+    targetPerMember: number;
+    userCounts: Record<string, { daily: number; bathing: number; total: number }>;
+  };
   currentUserRemainingQuota: number;
   isFirebaseSynced: boolean;
 }
@@ -1770,50 +1775,68 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const getQuotaStats = useCallback(
+    (targetYear?: number, targetMonth?: number) => {
+      const now = new Date();
+      const y = targetYear ?? now.getFullYear();
+      const m = targetMonth ?? now.getMonth();
+
+      const daysInMonth = new Date(y, m + 1, 0).getDate();
+      const targetPerMember = Math.ceil(daysInMonth / Math.max(1, users.length));
+
+      const userCounts: Record<string, { daily: number; bathing: number; total: number }> = {};
+      users.forEach((u) => {
+        userCounts[u.id] = { daily: 0, bathing: 0, total: 0 };
+      });
+
+      shifts.forEach((s) => {
+        if (!s.date || typeof s.date !== 'string') return;
+        const parts = s.date.split('-');
+        if (parts.length < 2) return;
+        const sYear = Number(parts[0]);
+        const sMonth = Number(parts[1]);
+
+        if (sYear === y && sMonth === m + 1) {
+          if (s.type === 'daily') {
+            const mId = getShiftMorningUserId(s);
+            const eId = getShiftEveningUserId(s);
+
+            if (mId && eId && mId === eId) {
+              if (userCounts[mId]) {
+                userCounts[mId].daily += 1;
+                userCounts[mId].total += 1;
+              }
+            } else {
+              if (mId && userCounts[mId]) {
+                userCounts[mId].daily += 0.5;
+                userCounts[mId].total += 0.5;
+              }
+              if (eId && userCounts[eId]) {
+                userCounts[eId].daily += 0.5;
+                userCounts[eId].total += 0.5;
+              }
+            }
+          } else if (s.type === 'bathing') {
+            if (userCounts[s.userId]) {
+              userCounts[s.userId].bathing += 1;
+              userCounts[s.userId].total += 1;
+            }
+          }
+        }
+      });
+
+      return {
+        totalDaysInMonth: daysInMonth,
+        targetPerMember,
+        userCounts,
+      };
+    },
+    [users, shifts]
+  );
+
   const quotaStats = useMemo(() => {
-    const now = new Date();
-    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-    const targetPerMember = Math.ceil(daysInMonth / Math.max(1, users.length));
-
-    const userCounts: Record<string, { daily: number; bathing: number; total: number }> = {};
-    users.forEach((u) => {
-      userCounts[u.id] = { daily: 0, bathing: 0, total: 0 };
-    });
-
-    shifts.forEach((s) => {
-      if (s.type === 'daily') {
-        const mId = getShiftMorningUserId(s);
-        const eId = getShiftEveningUserId(s);
-
-        if (mId && eId && mId === eId) {
-          if (userCounts[mId]) {
-            userCounts[mId].daily += 1;
-            userCounts[mId].total += 1;
-          }
-        } else {
-          if (mId && userCounts[mId]) {
-            userCounts[mId].daily += 0.5;
-            userCounts[mId].total += 0.5;
-          }
-          if (eId && userCounts[eId]) {
-            userCounts[eId].daily += 0.5;
-            userCounts[eId].total += 0.5;
-          }
-        }
-      } else if (s.type === 'bathing') {
-        if (userCounts[s.userId]) {
-          userCounts[s.userId].bathing += 1;
-          userCounts[s.userId].total += 1;
-        }
-      }
-    });
-
-    return {
-      totalDaysInMonth: daysInMonth,
-      targetPerMember,
-      userCounts,
-    };
-  }, [users, shifts]);
+    return getQuotaStats();
+  }, [getQuotaStats]);
 
   const currentUserRemainingQuota = useMemo(() => {
     if (!currentUser) return quotaStats.targetPerMember;
@@ -1897,6 +1920,7 @@ export const DutyProvider: React.FC<{ children: React.ReactNode }> = ({ children
         selectedShiftType,
         setSelectedShiftType,
         quotaStats,
+        getQuotaStats,
         currentUserRemainingQuota,
         isFirebaseSynced,
       }}
